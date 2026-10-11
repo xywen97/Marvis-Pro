@@ -151,7 +151,7 @@ class Terminal:
             if not 0 <= index < len(self.result_actions): raise ValueError('工具序号超出范围。')
             self.toggle_result(self.result_actions[index])
         elif cmd == '/help': self.local_text = HELP; self.page = 0
-        elif cmd == '/new': self.session = self.runtime.new_session(); self.local_text = ''; self.page = 0
+        elif cmd == '/new': self.session = self.runtime.new_session(self.session); self.local_text = ''; self.page = 0
         elif cmd == '/tree':
             if rest: self.select_tree(rest[0])
             else: self.navigator = Navigator(self.runtime.session_tree(self.session))

@@ -8,6 +8,11 @@ let liveConnected = false, liveAbort = null, stateUpdates = Promise.resolve(), m
 const signatures = {};
 const statuses = {queued:'排队中',running:'执行中',waiting_approval:'等待确认',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断'};
 const busy = t => ['queued','running','waiting_approval'].includes(t.status);
+let newSessionPending=null;
+function visibleSessions() {
+ const empty=state.sessions.find(s=>s.id===session&&s.is_empty)||state.sessions.find(s=>s.is_empty);
+ return state.sessions.filter(s=>!s.is_empty||s.id===empty?.id);
+}
 function el(tag, cls, text) { const e = document.createElement(tag); if(cls)e.className=cls; if(text!==undefined)e.textContent=text; return e; }
 function btn(text, callback, cls='') { const b=el('button',cls,text); b.type='button'; b.onclick=()=>safe(callback); return b; }
 function toast(text) { $('#toast').textContent=text; $('#toast').classList.remove('hidden'); clearTimeout(toast.timer); toast.timer=setTimeout(()=>$('#toast').classList.add('hidden'),4500); }
@@ -56,7 +61,7 @@ window.addEventListener('pagehide',()=>liveAbort?.abort());
 function renderState() {
  $('#knowledge-badge').textContent=state.knowledge_count;$('#mode-toggle').textContent=state.settings.mode==='local'?'◉ 本地模式':'◉ 效率模式';$('#model-label').textContent=state.settings.offline?'离线工具模式':state.settings.mode==='local'?'Ollama · qwen3:latest':state.settings.model.model||'模型未配置';
  if(!$('#index-path').value)$('#index-path').value=state.settings.roots[0];
- if(changed('sessions', [state.sessions,session])) {const box=$('#sessions');box.replaceChildren();state.sessions.forEach(s=>box.append(btn('◌  '+s.title,async()=>{session=s.id;showPage('chat');await renderMessages();renderState();},'session'+(session===s.id?' selected':''))));}
+ if(changed('sessions', [state.sessions,session])) {const box=$('#sessions');box.replaceChildren();visibleSessions().forEach(s=>box.append(btn('◌  '+s.title,async()=>{session=s.id;showPage('chat');await renderMessages();renderState();},'session'+(session===s.id?' selected':''))));}
  const active=state.tasks.filter(busy), current=active.find(t=>t.status!=='queued');
  if(changed('agents',current?[current.id,current.status,current.events.filter(e=>e.kind==='tool_start').slice(-1)[0]?.content.agent]:null)) { const box=$('#agents');box.replaceChildren();const last=current?.events.filter(e=>e.kind==='tool_start').slice(-1)[0];state.agents.forEach(a=>{let working=!!current&&(a.id==='main'||a.id===last?.content.agent);const row=el('div','agent-row'+(working?' busy':''));row.append(el('div','agent-avatar',a.icon));const info=el('div','agent-info');info.append(el('strong','',a.name),el('small','',a.role));row.append(info,el('span','agent-status',working?'工作中':'待命'));box.append(row);}); }
  const visible=active.find(t=>t.session_id===session), indicator=$('#active-task');indicator.classList.toggle('hidden',!visible);if(visible){indicator.replaceChildren(el('span','',statuses[visible.status]+' · '+visible.prompt.slice(0,40)),btn('停止',()=>api('cancel',{id:visible.id})));}
@@ -119,7 +124,10 @@ function fillSettings(){const f=$('#settings-form');f.elements.mode.value=state.
 function pathDialog(action,title,defaultValue,hint){pathAction=action;$('#path-title').textContent=title;$('#path-hint').textContent=hint||'请输入已授权目录内的完整路径。';$('#path-value').value=defaultValue||state?.settings.roots[0]||'';$('#path-query').value='';$('#path-query').classList.toggle('hidden',action!=='files');$('#path-dialog').showModal();$('#path-value').focus();}
 $('#chat-form').onsubmit=e=>{e.preventDefault();const p=$('#prompt').value.trim();if(!p)return;safe(async()=>{await submit(p);$('#prompt').value='';});};
 $('#prompt').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('#chat-form').requestSubmit();}};
-$('#new-chat').onclick=()=>safe(async()=>{const s=await api('sessions',{});session=s.id;showPage('chat');await renderMessages();await refresh();$('#prompt').focus();});
+$('#new-chat').onclick=()=>safe(async()=>{
+ if(!newSessionPending)newSessionPending=api('sessions',{session_id:session}).finally(()=>{newSessionPending=null;});
+ const s=await newSessionPending;session=s.id;showPage('chat');await renderMessages();await refresh();$('#prompt').focus();
+});
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>safe(()=>submit(b.dataset.prompt)));
 document.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>{const a=b.dataset.quick;if(a==='system')safe(()=>submit('检查电脑状态',{tool:'system_info',arguments:{}}));else if(a==='workflow')showPage('workflows');else pathDialog(a,a==='files'?'查找本地文件':'整理目录',state?.settings.roots[0]);});

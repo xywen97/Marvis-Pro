@@ -79,7 +79,7 @@ def serve(runtime, port=0):
                 data = json.loads(self.rfile.read(size))
                 if not isinstance(data, dict): raise ValueError('请求必须是 JSON 对象。')
                 path = urlparse(self.path).path
-                if path == '/api/sessions': value = {'id': runtime.new_session()}
+                if path == '/api/sessions': value = {'id': runtime.new_session(data.get('session_id'))}
                 elif path == '/api/tree-navigate': value = runtime.navigate_tree(data['session_id'], data.get('node_id'))
                 elif path == '/api/tree-label': value = runtime.label_node(data['session_id'], data['node_id'], data.get('label', ''))
                 elif path == '/api/tasks': value = runtime.submit(data.get('prompt', ''), data.get('session_id'), data.get('action'))

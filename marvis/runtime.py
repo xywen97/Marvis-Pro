@@ -93,10 +93,23 @@ class Runtime:
             if host not in ('127.0.0.1', 'localhost', '::1'): raise PermissionError('本地模型只允许 loopback 地址。')
         return client
 
-    def new_session(self): return self.store.session()
+    def new_session(self, session_id=None):
+        with self.lock:
+            if session_id and not self.store.one('SELECT id FROM sessions WHERE id=?', (session_id,)):
+                raise ValueError('会话不存在。')
+            # Check the whole tree, not just the active branch at the root.
+            empty = self.store.rows('''SELECT s.id FROM sessions s
+                WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id=s.id)
+                  AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.session_id=s.id)
+                ORDER BY s.created DESC''')
+            if session_id and any(s['id']==session_id for s in empty): return session_id
+            return empty[0]['id'] if empty else self.store.session()
 
     def sessions(self):
-        return self.store.rows('SELECT * FROM sessions ORDER BY created DESC LIMIT 100')
+        return self.store.rows('''SELECT s.*,
+            (NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id=s.id)
+             AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.session_id=s.id)) AS is_empty
+            FROM sessions s ORDER BY created DESC LIMIT 100''')
 
     def messages(self, session_id):
         session = self.store.one('SELECT active_leaf FROM sessions WHERE id=?', (session_id,))

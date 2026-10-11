@@ -26,7 +26,7 @@ class RemoteRuntime:
     def session_tree(self, session_id):return self.call('tree?session='+session_id)
     def navigate_tree(self, session_id, node_id=None):return self.call('tree-navigate',{'session_id':session_id,'node_id':node_id})
     def label_node(self, session_id, node_id, label):return self.call('tree-label',{'session_id':session_id,'node_id':node_id,'label':label})
-    def new_session(self):return self.call('sessions',{})['id']
+    def new_session(self, session_id=None):return self.call('sessions',{'session_id':session_id})['id']
     def submit(self,prompt,session_id=None,action=None):return self.call('tasks',{'prompt':prompt,'session_id':session_id,'action':action})
     def cancel(self,ident):return self.call('cancel',{'id':ident})
     def approve(self,ident,approved):return self.call('approve',{'id':ident,'approved':approved})

@@ -40,6 +40,8 @@ if __name__ == '__main__':
         model=ThreadingHTTPServer(('127.0.0.1',0),Model)
         threading.Thread(target=model.serve_forever,daemon=True).start()
         runtime=Runtime(folder)
+        if '--empty-duplicates' in sys.argv:
+            runtime.store.session();runtime.store.session()
         if WITH_TOOLS:
             from marvis.capabilities import Capabilities
             original=Capabilities.execute
