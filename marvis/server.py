@@ -65,9 +65,10 @@ def serve(runtime, port=0):
                 except Exception as e: return self.response(400, {'error': str(e)})
             if self.headers.get('Host') != f'127.0.0.1:{self.server.server_port}': return self.response(403, {'error': '不允许此 Host。'})
             files = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}
-            for name in ('markdown.js', 'progress.js', 'vendor/marked.js', 'vendor/purify.js', 'vendor/highlight.js'):
+            for name in ('markdown.js', 'progress.js', 'office.js', 'vendor/marked.js', 'vendor/purify.js', 'vendor/highlight.js'):
                 files['/' + name] = (name, 'text/javascript; charset=utf-8')
             files['/vendor/highlight.css'] = ('vendor/highlight.css', 'text/css; charset=utf-8')
+            files['/office.css'] = ('office.css', 'text/css; charset=utf-8')
             if parsed.path not in files: return self.response(404, {'error': '文件不存在。'})
             name, kind = files[parsed.path]
             self.response(200, (STATIC / name).read_bytes(), kind)

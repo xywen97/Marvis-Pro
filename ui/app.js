@@ -25,7 +25,7 @@ function richText(text) {
   return new Blob([Uint8Array.from(atob(value.data),c=>c.charCodeAt(0))],{type:value.mime});
  }});
 }
-function showPage(next) { page=next; document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===next));document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===next));$('#page-title').textContent={chat:'工作台',knowledge:'知识库',tasks:'任务中心',workflows:'自动化',settings:'设置'}[next]; if(next==='tasks'&&state)renderTasks();if(next==='knowledge')safe(loadKnowledge);if(next==='settings'&&state)fillSettings(); }
+function showPage(next) { page=next;document.body.classList.toggle('office-view',next==='office');if(next==='office')MarvisOffice.render(state); document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===next));document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===next));$('#page-title').textContent={chat:'工作台',office:'办公室',knowledge:'知识库',tasks:'任务中心',workflows:'自动化',settings:'设置'}[next]; if(next==='tasks'&&state)renderTasks();if(next==='knowledge')safe(loadKnowledge);if(next==='settings'&&state)fillSettings(); }
 function changed(name, value) { const sig=JSON.stringify(value); if(Object.prototype.hasOwnProperty.call(signatures,name)&&signatures[name]===sig)return false; signatures[name]=sig;return true; }
 function acceptState(value) {
  stateUpdates=stateUpdates.catch(()=>{}).then(async()=>{
@@ -59,6 +59,7 @@ async function watchLive() {
 }
 window.addEventListener('pagehide',()=>liveAbort?.abort());
 function renderState() {
+ if(page==='office')MarvisOffice.render(state);
  $('#knowledge-badge').textContent=state.knowledge_count;$('#mode-toggle').textContent=state.settings.mode==='local'?'◉ 本地模式':'◉ 效率模式';$('#model-label').textContent=state.settings.offline?'离线工具模式':state.settings.mode==='local'?'Ollama · qwen3:latest':state.settings.model.model||'模型未配置';
  if(!$('#index-path').value)$('#index-path').value=state.settings.roots[0];
  if(changed('sessions', [state.sessions,session])) {const box=$('#sessions');box.replaceChildren();visibleSessions().forEach(s=>box.append(btn('◌  '+s.title,async()=>{session=s.id;showPage('chat');await renderMessages();renderState();},'session'+(session===s.id?' selected':''))));}
@@ -145,3 +146,6 @@ $('#approve').onclick=()=>safe(()=>approve(true));$('#reject').onclick=()=>safe(
 document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='n'){e.preventDefault();$('#new-chat').click();}});
 safe(async()=>{await refresh();session=state?.sessions[0]?.id||null;await renderMessages();if(state)renderState();watchLive();});
 setInterval(()=>{if(!liveConnected)refresh();},250);
+
+$('#office-start').onclick=()=>{showPage('chat');$('#prompt').focus();};
+setInterval(()=>{if(page==='office')MarvisOffice.render(state);},1000);
