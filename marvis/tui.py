@@ -114,11 +114,12 @@ class Terminal:
     def __init__(self, runtime):
         self.runtime = runtime; self.page = 0; self.input = ''; self.cursor = 0
         sessions = runtime.sessions(); self.session = sessions[0]['id'] if sessions else runtime.new_session()
-        self.scroll = 0; self.notice = '输入 /help 查看全部命令'; self.local_text = ''; self.query = ''; self.show_trace = True
+        self.scroll = 0; self.notice = '滚轮 / 触控板查看历史 · 输入 /help 查看全部命令'; self.local_text = ''; self.query = ''; self.show_trace = True
         self.navigator = None
         self.expanded_results = set(); self.result_focus = None; self.result_actions = []; self.mouse_rows = {}
         self.animator = StreamAnimator(); self.cached_state = None; self.state_time = 0; self.cached_messages = []; self.messages_time = 0; self.messages_session = None
         self.rows_context=None;self.last_line_count=0
+        self.scroll_limit = 0
         self.completion_key = None; self.completion_index = 0; self.completion_hidden = False
 
     def suggestions(self):
@@ -380,6 +381,8 @@ class Terminal:
         if self.page==0 and not self.local_text and context==self.rows_context and self.scroll>0 and self.result_focus is None:
             self.scroll=max(0,self.scroll+len(lines)-self.last_line_count)
         self.rows_context=context;self.last_line_count=len(lines)
+        self.scroll_limit = max(0, len(lines) - available)
+        self.scroll = min(self.scroll_limit, max(0, self.scroll))
         start=max(0,len(lines)-available-self.scroll) if self.page==0 and not self.local_text else self.scroll
         if self.result_focus:
             index=next((i for i,line in enumerate(lines) if line.action==self.result_focus),None)
@@ -414,9 +417,35 @@ class Terminal:
         except curses.error:pass
         screen.noutrefresh();curses.doupdate()
 
+    def scroll_by(self, direction, amount=3):
+        """Negative direction goes toward older/top rows, positive toward bottom."""
+        if self.navigator is not None:
+            if self.navigator.label_edit is None: self.navigator.move(direction * amount)
+            return
+        self.result_focus = None
+        delta = -direction if self.page == 0 and not self.local_text else direction
+        self.scroll = min(self.scroll_limit, max(0, self.scroll + delta * amount))
+
+    @staticmethod
+    def wheel_buttons():
+        # macOS's mouse ABI v1 reports button 5 as REPORT_MOUSE_POSITION.
+        # Request button tracking only (mode 1000), not pointer-motion tracking.
+        return (getattr(curses, 'BUTTON4_PRESSED', 0),
+                getattr(curses, 'BUTTON5_PRESSED', curses.REPORT_MOUSE_POSITION))
+
+    def mouse_event(self):
+        try: _, _, y, _, buttons = curses.getmouse()
+        except curses.error: return
+        up, down = self.wheel_buttons()
+        if buttons & up: self.scroll_by(-1)
+        elif buttons & down: self.scroll_by(1)
+        elif self.navigator is None and buttons & curses.BUTTON1_CLICKED and y in self.mouse_rows:
+            self.toggle_result(self.mouse_rows[y])
+
     def run(self, screen):
         curses.curs_set(1);screen.keypad(True);screen.timeout(30)
-        try:curses.mousemask(curses.BUTTON1_CLICKED)
+        up, down = self.wheel_buttons()
+        try:curses.mousemask(curses.BUTTON1_CLICKED | up | down)
         except curses.error:pass
         if curses.has_colors():
             curses.start_color();curses.use_default_colors();curses.init_pair(1,curses.COLOR_CYAN,-1);curses.init_pair(2,curses.COLOR_BLUE,-1);curses.init_pair(3,curses.COLOR_YELLOW,-1)
@@ -430,13 +459,10 @@ class Terminal:
             try:k=screen.get_wch()
             except curses.error:continue
             try:
+                if k==curses.KEY_MOUSE:
+                    self.mouse_event(); continue
                 if self.navigator is not None:
                     self.tree_key(k); continue
-                if k==curses.KEY_MOUSE:
-                    try:_,_,y,_,buttons=curses.getmouse()
-                    except curses.error:continue
-                    if buttons&curses.BUTTON1_CLICKED and y in self.mouse_rows:self.toggle_result(self.mouse_rows[y])
-                    continue
                 if self.result_focus is not None:
                     self.result_key(k);continue
                 if k=='\x12':
@@ -465,8 +491,8 @@ class Terminal:
                     direction = -1 if k == curses.KEY_UP else 1
                     self.completion_index = (self.completion_index + direction) % len(self.suggestions())
                 elif isinstance(k,int) and curses.KEY_F1<=k<=curses.KEY_F5:self.page=k-curses.KEY_F1;self.scroll=0
-                elif k in (curses.KEY_UP,curses.KEY_PPAGE):self.scroll=max(0,self.scroll+(5 if self.page==0 else -5))
-                elif k in (curses.KEY_DOWN,curses.KEY_NPAGE):self.scroll=max(0,self.scroll+(-5 if self.page==0 else 5))
+                elif k in (curses.KEY_UP,curses.KEY_PPAGE):self.scroll_by(-1,5)
+                elif k in (curses.KEY_DOWN,curses.KEY_NPAGE):self.scroll_by(1,5)
                 elif isinstance(k,str) and k.isprintable():self.input=self.input[:self.cursor]+k+self.input[self.cursor:];self.cursor+=len(k)
             except (ValueError,KeyError,IndexError,PermissionError) as e:
                 self.notice = '错误：' + str(e)

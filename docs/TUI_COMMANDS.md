@@ -45,3 +45,5 @@
 | `/quit` | `/q` | 退出 |
 
 参数格式可在 TUI 中输入 `/help` 或 `/h` 查看。删除对话仍需明确提供 `ID --confirm`，例如 `/del SESSION_ID --confirm`。
+
+鼠标滚轮和触控板滑动可上下查看对话历史、帮助与其他页面，每次滚动移动三行。在历史位置阅读时，新输出不会把视图拉回底部；滚回底部后恢复跟随。在 `/tree` 中也可以滚动选择步骤，再按 Enter 切换。需要终端支持鼠标报告，TUI 启动时自动启用。兼容 macOS 自带 curses 的滚轮事件表示，参见 [ncurses 鼠标接口说明](https://www.invisible-island.net/ncurses/man/curs_mouse.3x.html)。
