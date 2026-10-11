@@ -1,0 +1,2 @@
+# CLI, TUI, HTTP service and knowledge store otherwise use the standard library.
+PyYAML>=6,<7

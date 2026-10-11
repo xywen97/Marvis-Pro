@@ -1,0 +1,10 @@
+.env
+.venv/
+.marvis/
+.cache/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+*.spec
