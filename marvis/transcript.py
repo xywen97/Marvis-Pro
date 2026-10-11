@@ -157,6 +157,8 @@ def dialogue_rows(messages, tasks, show_trace=True, expanded=None, frame=0):
         rows.append(Line('你 › ' + parts[0], 'user', '     '))
         rows.extend(Line('     ' + part, 'user', '     ') for part in parts[1:])
         task = by_id.get(message.get('task_id')); answer = answers.get(message.get('task_id'))
+        if task and 'event_cutoff' in message and task['status'] not in ('queued','running','waiting_approval'):
+            task = {**task,'events':[e for e in task['events'] if e['id']<=message['event_cutoff']]}
         nodes = []
         if task and show_trace:
             nodes.append(node('执行过程', 'muted', process_nodes(task, not answer, expanded, frame)))

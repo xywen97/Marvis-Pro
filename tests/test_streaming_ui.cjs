@@ -10,7 +10,7 @@ async function run(){
  try {
   const lines=readline.createInterface({input:fixture.stdout});
   const data=JSON.parse(await new Promise((resolve,reject)=>{lines.once('line',resolve);fixture.once('exit',code=>reject(new Error('fixture exited '+code)));}));
-  browser=await chromium.launch({headless:true});
+  browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE||undefined});
   const page=await browser.newPage({viewport:{width:1380,height:900}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(data.url);await page.waitForFunction(()=>typeof liveConnected!=='undefined'&&liveConnected);
   await page.locator('#prompt').fill('请给出一段逐步生成的示例');await page.locator('#prompt').press('Enter');

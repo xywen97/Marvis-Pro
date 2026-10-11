@@ -34,7 +34,7 @@ class SessionManagementTests(unittest.TestCase):
         r.store.event('finished', 'completed', {'text':'完成'})
         r.store.execute('INSERT INTO workflows VALUES (?,?,?,?,?,?,?)', ('wf','流程','你好',60,now,0,'finished'))
         r.session_action(sid, 'delete')
-        for table in ('messages','tasks','events'): self.assertEqual(r.store.rows('SELECT * FROM '+table), [])
+        for table in ('messages','tasks','events','entries'): self.assertEqual(r.store.rows('SELECT * FROM '+table), [])
         self.assertIsNone(r.store.one('SELECT last_task FROM workflows')['last_task'])
         self.assertEqual(r.sessions()[0]['id'], other)
     def test_busy_and_finalizing_tasks_are_protected(self):

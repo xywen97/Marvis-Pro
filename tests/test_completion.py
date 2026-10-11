@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import Mock
-from marvis.tui import Terminal, COMMANDS
+from marvis.tui import Terminal, COMMANDS, SHORT_COMMANDS, ALIASES, HELP
 
 
 class CompletionTests(unittest.TestCase):
@@ -48,3 +48,49 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(matches, COMMANDS)
         self.assertEqual(len({c[0] for c in matches}), len(matches))
         self.assertTrue(all(c[1] and c[2] for c in matches))
+
+    def test_short_command_completion_displays_canonical_usage(self):
+        for text, expected in [('/q','/quit'),('/ls','/sessions'),('/oa','/open-app'),('/wfr','/workflow-run'),('/s','/search')]:
+            matches = self.enter(text)
+            self.assertEqual(matches[0][0], expected)
+            self.assertIn('('+SHORT_COMMANDS[expected]+')', matches[0][1])
+            self.terminal.complete()
+            self.assertEqual(self.terminal.input, expected+' ')
+        self.assertIn('/quit (q)', HELP)
+        self.assertIn('/new (new)', HELP)
+        self.assertNotIn('/n', ALIASES)
+        with self.assertRaisesRegex(ValueError, '未知命令'): self.terminal.command('/n')
+
+    def test_short_commands_preserve_arguments_and_confirmation(self):
+        runtime = self.terminal.runtime
+        runtime.submit.return_value = {'session_id':'session'}
+        runtime.workflow_action.return_value = {}
+        self.terminal.command('/f "/tmp/有 空格" 搜索词')
+        self.assertEqual(runtime.submit.call_args.args[2], {'tool':'file_list','arguments':{'path':'/tmp/有 空格','query':'搜索词','content':True}})
+        self.terminal.command('/wfr workflow-id')
+        runtime.workflow_action.assert_called_once_with('workflow-id', 'run')
+        with self.assertRaisesRegex(ValueError, 'confirm'): self.terminal.command('/del other')
+        runtime.session_action.assert_not_called()
+        self.terminal.command('/del other --confirm')
+        runtime.session_action.assert_called_once_with('other','delete')
+        self.assertFalse(self.terminal.command('/q'))
+        self.assertFalse(self.terminal.command('/quit'))
+
+    def test_tree_opens_selector_without_node_argument(self):
+        runtime = self.terminal.runtime
+        runtime.session_tree.return_value = {'session': {'active_leaf': None}, 'nodes': [], 'path': []}
+        for command in ('/tree', '/t'):
+            self.assertEqual(self.enter(command)[0][1], '/tree (t)')
+            self.terminal.command(command)
+            self.assertIsNotNone(self.terminal.navigator)
+            self.assertEqual(self.terminal.session, 'session')
+        self.assertNotIn('[NODE_ID]', HELP)
+        runtime.navigate_tree.assert_not_called()
+
+    def test_every_command_has_one_unambiguous_registered_short_form(self):
+        names = {entry[0] for entry in COMMANDS}
+        self.assertEqual(set(SHORT_COMMANDS), names)
+        self.assertEqual(len(set(SHORT_COMMANDS.values())),len(names))
+        for name, short in SHORT_COMMANDS.items():
+            self.assertEqual(ALIASES['/'+short], name)
+            if '/'+short in names: self.assertEqual('/'+short, name)

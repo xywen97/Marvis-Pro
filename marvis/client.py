@@ -25,7 +25,7 @@ class RemoteRuntime:
         from urllib.parse import quote
         return self.call('image?path='+quote(path))
     def session_tree(self, session_id):return self.call('tree?session='+session_id)
-    def navigate_tree(self, session_id, node_id=None):return self.call('tree-navigate',{'session_id':session_id,'node_id':node_id})
+    def navigate_tree(self, session_id, node_id=None, summarize=False, custom_instructions=None):return self.call('tree-navigate',{'session_id':session_id,'node_id':node_id,'summarize':summarize,'custom_instructions':custom_instructions})
     def label_node(self, session_id, node_id, label):return self.call('tree-label',{'session_id':session_id,'node_id':node_id,'label':label})
     def new_session(self, session_id=None):return self.call('sessions',{'session_id':session_id})['id']
     def submit(self,prompt,session_id=None,action=None):return self.call('tasks',{'prompt':prompt,'session_id':session_id,'action':action})

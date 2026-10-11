@@ -83,7 +83,7 @@ def serve(runtime, port=0):
                 path = urlparse(self.path).path
                 if path == '/api/sessions': value = {'id': runtime.new_session(data.get('session_id'))}
                 elif path == '/api/session-action': value = runtime.session_action(data['session_id'], data['action'])
-                elif path == '/api/tree-navigate': value = runtime.navigate_tree(data['session_id'], data.get('node_id'))
+                elif path == '/api/tree-navigate': value = runtime.navigate_tree(data['session_id'], data.get('node_id'),data.get('summarize',False),data.get('custom_instructions'))
                 elif path == '/api/tree-label': value = runtime.label_node(data['session_id'], data['node_id'], data.get('label', ''))
                 elif path == '/api/tasks': value = runtime.submit(data.get('prompt', ''), data.get('session_id'), data.get('action'))
                 elif path == '/api/cancel': value = runtime.cancel(data['id'])

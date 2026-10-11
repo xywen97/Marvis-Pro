@@ -32,7 +32,7 @@ function acceptState(value) {
   state=value;
   if(session&&!allSessions().some(s=>s.id===session)){session=state.sessions[0]?.id||null;$('#prompt').value='';await renderMessages();}
   $('#connection').textContent='● 已连接';$('#connection').style.color='';renderState();
-  if(session&&changed('messages-session',[session,allSessions().find(s=>s.id===session)?.active_leaf,state.tasks.filter(t=>t.session_id===session).map(t=>[t.id,t.status,t.updated])]))await renderMessages();
+  if(session&&changed('messages-session',[session,allSessions().find(s=>s.id===session)?.active_leaf,allSessions().find(s=>s.id===session)?.active_entry,state.tasks.filter(t=>t.session_id===session).map(t=>[t.id,t.status,t.updated])]))await renderMessages();
  });
  return stateUpdates;
 }
@@ -114,7 +114,8 @@ async function renderMessages() {
    else if(content.textContent!==message.content)content.replaceChildren(el('div','message-content',message.content));
   }});
   if(message.role==='user'&&tasks.has(message.task_id)){
-   const task=tasks.get(message.task_id);
+   let task=tasks.get(message.task_id);
+   if(message.event_cutoff!==undefined&&!busy(task))task={...task,branch_cutoff:true,events:task.events.filter(e=>e.id<=message.event_cutoff)};
    specs.push({key:'trace-'+task.id,make:()=>el('div','agent-progress'),update:root=>AgentProgress.updateTrace(root,task)});
   }
  }

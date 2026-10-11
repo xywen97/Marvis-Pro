@@ -14,7 +14,7 @@ PAGES = ['对话', '任务', '知识库', '自动化', '设置']
 STATUS = {'queued': '排队', 'running': '执行中', 'waiting_approval': '待确认', 'completed': '完成', 'failed': '失败', 'cancelled': '停止', 'interrupted': '中断'}
 HELP = '''输入自然语言，或使用以下命令：
 /new                         新建对话
-/tree [NODE_ID]              会话树：历史跳转、编辑重发、分支切换
+/tree                        执行步骤树：历史跳转、编辑重发、分支切换
 /sessions                    列出会话 ID
 /archives                    列出已归档会话
 /archive [ID]                归档指定或当前对话
@@ -53,12 +53,33 @@ HELP = '''输入自然语言，或使用以下命令：
 F1–F5 页面 · ↑↓滚动/选择联想 · Tab补全/切换页面 · Ctrl+R工具结果 · Ctrl+N新会话 · Ctrl+X停止
 '''
 
-# Keep suggestions and /help in sync, including argument hints.
+# Exact aliases only: ambiguous prefixes such as /n never execute a command.
+# Already short names remain unchanged and still appear in parentheses.
+SHORT_COMMANDS = {
+    '/new':'new', '/tree':'t', '/sessions':'ls', '/session':'ss',
+    '/archives':'las', '/archive':'ar', '/restore':'rs', '/delete':'del',
+    '/files':'f', '/read':'r', '/write':'w', '/organize':'org',
+    '/duplicates':'dup', '/convert':'cv', '/index':'i', '/search':'s',
+    '/ocr':'ocr', '/system':'sys', '/apps':'apps', '/open-app':'oa',
+    '/web':'web', '/browse':'b', '/web-search':'ws', '/mode':'mode',
+    '/model':'mdl', '/roots':'rt', '/workflow':'wf', '/workflow-run':'wfr',
+    '/workflow-toggle':'wft', '/workflow-delete':'wfd', '/approve':'a',
+    '/reject':'j', '/cancel':'c', '/trace':'tr', '/result':'res',
+    '/help':'h', '/quit':'q',
+}
+ALIASES = {'/' + short: name for name, short in SHORT_COMMANDS.items()}
+# Keep suggestions, aliases and /help in sync, including argument hints.
 COMMANDS = []
+help_lines = []
 for line in HELP.splitlines():
     if line.startswith('/'):
         usage, description = re.split(r'\s{2,}', line, maxsplit=1)
-        COMMANDS.append((usage.split()[0], usage, description))
+        name, _, arguments = usage.partition(' ')
+        usage = f'{name} ({SHORT_COMMANDS[name]})' + (' ' + arguments if arguments else '')
+        COMMANDS.append((name, usage, description))
+        line = f'{usage:<38}  {description}'
+    help_lines.append(line)
+HELP = '\n'.join(help_lines)
 
 
 def width(text):
@@ -109,7 +130,14 @@ class Terminal:
         if (self.completion_hidden or not self.input.startswith('/')
                 or self.cursor != len(self.input) or any(c.isspace() for c in self.input)):
             return []
-        return [entry for entry in COMMANDS if entry[0].startswith(self.input.lower())]
+        prefix = self.input.lower()
+        entries = [entry for entry in COMMANDS
+                   if entry[0].startswith(prefix) or ('/' + SHORT_COMMANDS[entry[0]]).startswith(prefix)]
+        # A complete short command should be the first suggestion, even when
+        # other full commands share the prefix (e.g. /s -> /search).
+        if prefix in ALIASES:
+            entries.sort(key=lambda entry: entry[0] != ALIASES[prefix])
+        return entries
 
     def complete(self):
         suggestions = self.suggestions()
@@ -127,7 +155,7 @@ class Terminal:
         if not text.startswith('/'):
             task = self.runtime.submit(text, self.session); self.session = task['session_id']; self.local_text = ''; self.page = 0
             return True
-        args = shlex.split(text); cmd = args[0]; rest = args[1:]
+        args = shlex.split(text); cmd = ALIASES.get(args[0], args[0]); rest = args[1:]
         tools = {
             '/files': ('file_list', lambda: {'path': rest[0], 'query': ' '.join(rest[1:]), 'content': True}),
             '/read': ('file_read', lambda: {'path': rest[0]}),
@@ -157,8 +185,7 @@ class Terminal:
         elif cmd == '/help': self.local_text = HELP; self.page = 0
         elif cmd == '/new': self.session = self.runtime.new_session(self.session); self.local_text = ''; self.page = 0
         elif cmd == '/tree':
-            if rest: self.select_tree(rest[0])
-            else: self.navigator = Navigator(self.runtime.session_tree(self.session))
+            self.navigator = Navigator(self.runtime.session_tree(self.session))
         elif cmd == '/sessions': self.local_text = '\n'.join(f"{s['id']}  {s['title']}" for s in self.runtime.sessions()); self.page = 0
         elif cmd == '/archives': self.local_text = '\n'.join(f"{s['id']}  {s['title']}" for s in self.runtime.sessions(True)) or '没有已归档的对话'; self.page = 0
         elif cmd in ('/archive', '/restore', '/delete'):
@@ -253,10 +280,11 @@ class Terminal:
             return '自动化 · 服务运行期间执行\n/workflow 60 "磁盘巡检" 检查磁盘空间\n\n' + '\n\n'.join(f"{'运行' if w['enabled'] else '暂停'}  {w['name']} · 每 {w['interval']//60} 分钟\nID: {w['id']}\n{w['prompt']}" for w in snapshot['workflows'])
         return '设置 · /mode /model /roots\n\n' + json.dumps(snapshot['settings'], ensure_ascii=False, indent=2) + '\n\n本地模式：Ollama 127.0.0.1:11434 / qwen3:latest\nAPI Key 从 .env 读取，不显示在界面。'
 
-    def select_tree(self, node_id):
-        result = self.runtime.navigate_tree(self.session, node_id)
+    def select_tree(self, node_id, summarize=False):
+        result = self.runtime.navigate_tree(self.session, node_id, summarize=summarize)
         self.input = result['input']; self.cursor = len(self.input)
         self.navigator = None; self.local_text = ''; self.page = 0; self.scroll = 0
+        self.state_time = 0; self.messages_time = 0; self.messages_session = None; self.rows_context = None
         self.notice = '已切换历史位置；新消息将形成分支，原记录保留。'
 
     def draw_tree(self, screen):
@@ -266,20 +294,26 @@ class Terminal:
             if 0 <= y < h:
                 try: screen.addstr(y, 2, fit(text, max(0, w - 4)), attr)
                 except curses.error: pass
-        put(0, '会话树 · ' + nav.data['session']['title'], curses.color_pair(1) | curses.A_BOLD)
-        put(2, '↑↓选择 · ←折叠/父节点 · →展开 · Enter切换 · Esc返回', curses.color_pair(2))
+        put(0, '执行步骤树 · ' + nav.data['session']['title'], curses.color_pair(1) | curses.A_BOLD)
+        put(2, '↑↓选择 · ←折叠/父节点 · →展开 · Enter切换 · Ctrl+S摘要后切换 · Esc返回', curses.color_pair(2))
         put(3, f"Ctrl+O筛选：{nav.filters[nav.filter]} · L书签 · 输入搜索：{nav.query}", curses.color_pair(2))
         rows = nav.rows(); index = next(i for i, r in enumerate(rows) if r['id'] == nav.selected)
         count = max(1, h - 10); start = max(0, index - count + 1)
         active = set(nav.data['path']); leaf = nav.data['session']['active_leaf']
         for offset, row in enumerate(rows[start:start + count]):
-            role = {'user': '你', 'assistant': 'MarvisXY', 'root': '起点'}[row['role']]
+            kind = row.get('kind',row['role'])
+            role = {'user':'user','assistant':'assistant','root':'system','thinking':'thinking','tool_call':'tool call','tool_result':'tool result','branch_summary':'branch summary'}.get(kind,kind)
             marker = '● ' if row['id'] == leaf else '• ' if row['id'] in active else '  '
             fold = '[+] ' if row['id'] in nav.collapsed else ''
             label = ' ★ ' + row['label'] if row.get('label') else ''
             prefix = row['prefix'] if len(row['prefix']) < w // 3 else '… ' + row['prefix'][-w // 3:]
-            text = prefix + marker + fold + role + label + ': ' + row['content'].replace('\n', ' ')
-            attr = self.line_attr('user' if row['role'] == 'user' else 'answer')
+            preview = row['content'].replace('\n',' ')
+            if kind in ('tool_call','tool_result'):
+                data = row.get('data',{})
+                value = data.get('arguments',{}) if kind=='tool_call' else data.get('result',data.get('text',''))
+                preview = data.get('tool','')+' '+json.dumps(value,ensure_ascii=False)
+            text = prefix + marker + fold + role + label + ': ' + preview
+            attr = self.line_attr({'user':'user','thinking':'muted','tool_call':'tool','tool_result':'success','branch_summary':'muted','root':'muted'}.get(kind,'answer'))
             if row['id'] == nav.selected: attr |= curses.A_REVERSE
             put(5 + offset, text, attr)
         selected = nav.current()
@@ -287,7 +321,7 @@ class Terminal:
         put(h - 3, selected['content'].replace('\n', ' '))
         if nav.label_edit is not None: put(h - 1, '书签名称（Enter保存，留空清除）：' + nav.label_edit, curses.color_pair(3))
         elif nav.error: put(h - 1, nav.error, curses.color_pair(5))
-        else: put(h - 1, '选用户消息：回到其父节点并填入编辑器；选助手回复：从此继续。', curses.color_pair(2))
+        else: put(h - 1, 'user：回到父节点并填入编辑器；其他步骤：从该步继续，清空编辑器。', curses.color_pair(2))
         screen.refresh()
 
     def tree_key(self, key):
@@ -301,6 +335,7 @@ class Terminal:
             elif isinstance(key, str) and key.isprintable(): nav.label_edit += key
         elif key in ('\x1b', '\x03'): self.navigator = None
         elif key in ('\n', '\r', curses.KEY_ENTER): self.select_tree(nav.selected)
+        elif key == '\x13': self.select_tree(nav.selected, summarize=True)
         elif key in (curses.KEY_UP, curses.KEY_DOWN): nav.move(-1 if key == curses.KEY_UP else 1)
         elif key in (curses.KEY_PPAGE, curses.KEY_NPAGE): nav.move(-10 if key == curses.KEY_PPAGE else 10)
         elif key == curses.KEY_LEFT: nav.fold()
@@ -387,7 +422,7 @@ class Terminal:
             curses.start_color();curses.use_default_colors();curses.init_pair(1,curses.COLOR_CYAN,-1);curses.init_pair(2,curses.COLOR_BLUE,-1);curses.init_pair(3,curses.COLOR_YELLOW,-1)
             curses.init_pair(4, curses.COLOR_GREEN, -1)
             curses.init_pair(5, curses.COLOR_RED, -1)
-            curses.init_pair(6, 245 if curses.COLORS >= 256 else curses.COLOR_WHITE, -1)
+            curses.init_pair(6, 250 if curses.COLORS >= 256 else curses.COLOR_WHITE, -1)
         active=True
         while active:
             screen.timeout(30 if self.page==0 and not self.local_text and self.navigator is None else 150)

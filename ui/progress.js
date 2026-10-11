@@ -91,7 +91,7 @@ window.AgentProgress = (() => {
  function updateTrace(root,task) {
   root.className='chat-trace agent-progress';
   if(!root.firstElementChild)root.append(el('div','progress-heading'),el('div','progress-steps'));
-  root.firstElementChild.textContent=`${statuses[task.status]} · 执行过程`;
+  root.firstElementChild.textContent=`${task.branch_cutoff?'历史截点':statuses[task.status]} · 执行过程`;
   const groups=steps(task), latest=groups[groups.length-1]?.step;
   sync(root.lastElementChild,groups.map(group=>({
    key:'step-'+group.step,
