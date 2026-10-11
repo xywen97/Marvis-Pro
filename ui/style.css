@@ -63,3 +63,23 @@
 /* Session actions stay beside the title; the popover remains inside the scroll area. */
 .session-heading{display:flex;align-items:center;justify-content:space-between;gap:5px}.session-heading button{font-size:9px;padding:3px 5px;border:0;background:transparent;color:#8394ae;letter-spacing:0}
 .session-entry{position:relative;display:flex;align-items:center;border-radius:9px}.session-entry.selected{background:#eaf0ff}.session-entry>.session{flex:1;min-width:0;padding-right:30px}.session-menu{position:absolute;right:6px;top:5px;z-index:2}.session-menu[open]{z-index:4}.session-menu summary{cursor:pointer;list-style:none;padding:3px 7px;color:#8698b2;border-radius:5px}.session-menu summary::-webkit-details-marker{display:none}.session-menu summary:hover{background:#dfe8f8}.session-menu-actions{position:absolute;right:0;top:26px;width:130px;padding:5px;background:white;border:1px solid #e3e9f1;border-radius:8px;box-shadow:0 5px 18px #2436511a}.session-menu-actions button{display:block;width:100%;border:0;text-align:left;padding:7px 9px;font-size:11px}.danger{color:#bd6262}.session-empty{font-size:11px;padding:8px;color:#9aa6b7}.session-menu summary:focus-visible{outline:2px solid #6d92ff}
+
+/* Conversation controls and slash commands */
+.bubble-actions{display:flex;gap:6px;margin-top:10px;opacity:.65}
+.bubble-actions:hover,.bubble-actions:focus-within{opacity:1}
+.bubble-actions button{border:0;background:transparent;color:#7c8ca4;width:32px;height:32px;border-radius:8px;font-size:21px;cursor:pointer}
+.bubble-actions button:hover{background:#e8eef7;color:#3568ed}
+.bubble-actions button:disabled{opacity:.35;cursor:default}
+.composer{position:relative}
+.command-menu{position:absolute;bottom:100%;left:0;right:0;max-height:280px;overflow:auto;padding:8px;margin-bottom:8px;background:white;border:1px solid #dce5f2;border-radius:14px;box-shadow:0 8px 24px #24344812;z-index:10}
+.command-option{display:block;width:100%;padding:10px 12px;text-align:left;border:0;background:transparent;border-radius:8px;color:#657894;cursor:pointer}
+.command-option.selected,.command-option:hover{background:#edf2ff;color:#3568ed}
+.tree-dialog{width:min(760px,90vw)}
+.tree-dialog input{width:100%;margin:8px 0 16px}
+.tree-list{max-height:50vh;overflow:auto;border:1px solid #e4eaf4;border-radius:12px}
+.tree-option{display:block;text-align:left;width:100%;padding:10px 12px;border:0;border-bottom:1px solid #f0f3f8;background:white;color:#243448;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.tree-option.user{color:#3969cf}.tree-option.thinking{color:#8d99ac}.tree-option.tool_call{color:#7186a2}.tree-option.tool_result{color:#478d7c}
+.tree-option.selected,.tree-option:hover{background:#edf2ff}
+.command-dialog{width:min(760px,90vw)}.command-dialog pre{max-height:65vh;overflow:auto;white-space:pre-wrap}
+.clipboard-fallback{position:fixed;left:-10000px;top:0}
+.hide-traces .agent-progress{display:none}

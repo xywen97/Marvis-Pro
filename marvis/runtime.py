@@ -234,6 +234,47 @@ class Runtime:
             self.store.execute('UPDATE sessions SET active_leaf=? WHERE id=?', (message_leaf, session_id))
             return {'leaf': leaf, 'input': item['content'] if item and item['kind'] == 'user' else '', 'summary_id':summary_id}
 
+    def fork_session(self, session_id, node_id):
+        """Copy the selected ancestry to an independent chat, without replay."""
+        with self.lock, self.store.lock:
+            source = self.store.one('SELECT * FROM sessions WHERE id=?', (session_id,))
+            if not source: raise ValueError('会话不存在。')
+            if not self.store.one('SELECT id FROM entries WHERE session_id=? AND id=?', (session_id,node_id)):
+                raise ValueError('节点不存在。')
+            if any(t['status'] in ('queued','running','waiting_approval') or t['id'] in self.cancels
+                   for t in self.store.rows('SELECT id,status FROM tasks WHERE session_id=?',(session_id,))):
+                raise ValueError('请先完成或停止当前任务，再分支到新聊天。')
+            path = self.store.entry_branch(session_id,node_id)
+            sid = uid(); node_ids = {n['id']:uid() for n in path}; task_ids = {}; event_ids = {}
+            with self.store.db:
+                db = self.store.db
+                db.execute('INSERT INTO sessions(id,title,created,active_entry) VALUES (?,?,?,?)',
+                           (sid,source['title']+' · 分支',time.time(),None))
+                for old_task in dict.fromkeys(n['task_id'] for n in path if n['task_id']):
+                    task = self.store.one('SELECT * FROM tasks WHERE id=?',(old_task,))
+                    task_ids[old_task] = uid()
+                    answer = next((n['content'] for n in reversed(path) if n['task_id']==old_task and n['kind']=='assistant'),'')
+                    final = next(n for n in reversed(path) if n['task_id']==old_task)['kind']=='assistant'
+                    db.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?,?)',
+                               (task_ids[old_task],sid,task['prompt'],task['status'] if final else 'completed',answer,task['created'],time.time()))
+                    cutoff = max((n['event_id'] or 0 for n in path if n['task_id']==old_task),default=0)
+                    for event in self.store.rows('SELECT * FROM events WHERE task_id=? AND (id<=? OR ?) ORDER BY id',(old_task,cutoff,final)):
+                        event_ids[event['id']] = db.execute('INSERT INTO events(task_id,kind,content,created) VALUES (?,?,?,?)',
+                            (task_ids[old_task],event['kind'],event['content'],event['created'])).lastrowid
+                for n in path:
+                    if n['event_id'] in event_ids: node_ids[n['id']] = 'event-'+str(event_ids[n['event_id']])
+                message_leaf = None
+                for n in path:
+                    ident = node_ids[n['id']]; parent = node_ids.get(n['parent_id']); task = task_ids.get(n['task_id'])
+                    db.execute('INSERT INTO entries VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                        (ident,sid,parent,n['kind'],n['role'],n['content'],json.dumps(n['data'],ensure_ascii=False),task,event_ids.get(n['event_id']),n['created'],n['label']))
+                    if n['kind'] in ('user','assistant'):
+                        db.execute('INSERT INTO messages(id,session_id,role,content,task_id,created,parent_id,label) VALUES (?,?,?,?,?,?,?,?)',
+                            (ident,sid,n['role'],n['content'],task,n['created'],message_leaf,n['label']))
+                        message_leaf = ident
+                db.execute('UPDATE sessions SET active_leaf=?,active_entry=? WHERE id=?',(message_leaf,node_ids[node_id],sid))
+            return {'session_id':sid}
+
     def label_node(self, session_id, node_id, label):
         if not self.store.one('SELECT id FROM entries WHERE id=? AND session_id=?', (node_id, session_id)): raise ValueError('节点不存在。')
         label = str(label).strip()

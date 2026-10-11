@@ -103,7 +103,7 @@ window.AgentProgress = (() => {
     const notes=group.notes.filter(e=>e.kind==='assistant_note'||group.tools.length||(busy(task)&&group.step===latest));
     const items=notes.map(event=>({key:'note-'+event.id,
      make:()=>{const note=el('div','thought-bubble message assistant');note.append(el('div','thought-heading','✦ 处理说明'),el('div','thought-text'));return note;},
-     update:note=>{const streaming=active&&event.kind==='assistant_stream';note.classList.toggle('streaming',streaming);text(note.lastElementChild,event.content.text,streaming);}
+     update:note=>{const streaming=active&&event.kind==='assistant_stream';note.dataset.entryId=streaming?'':'event-'+event.id;note.dataset.content=event.content.text;note.classList.toggle('streaming',streaming);text(note.querySelector('.thought-text'),event.content.text,streaming);}
     }));
     items.push(...group.tools.map(tool=>({key:'tool-'+tool.key,make:makeTool,update:node=>updateTool(node,tool,task)})));
     items.push(...group.events.map(event=>({key:'event-'+event.id,make:()=>el('div','progress-status'),update:node=>{node.textContent=event.content.text||event.content.action||event.kind;}})));

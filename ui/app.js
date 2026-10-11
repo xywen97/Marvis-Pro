@@ -112,11 +112,15 @@ async function renderMessages() {
    const content=row.querySelector('.message-text');
    if(message.role==='assistant')AgentProgress.text(content,message.content);
    else if(content.textContent!==message.content)content.replaceChildren(el('div','message-content',message.content));
+   bubbleActions(row.querySelector('.message-body'),message.id,message.content);
   }});
   if(message.role==='user'&&tasks.has(message.task_id)){
    let task=tasks.get(message.task_id);
    if(message.event_cutoff!==undefined&&!busy(task))task={...task,branch_cutoff:true,events:task.events.filter(e=>e.id<=message.event_cutoff)};
-   specs.push({key:'trace-'+task.id,make:()=>el('div','agent-progress'),update:root=>AgentProgress.updateTrace(root,task)});
+   specs.push({key:'trace-'+task.id,make:()=>el('div','agent-progress'),update:root=>{
+    AgentProgress.updateTrace(root,task);
+    root.querySelectorAll('.thought-bubble').forEach(note=>bubbleActions(note,note.dataset.entryId,note.dataset.content));
+   }});
   }
  }
  AgentProgress.sync(box,specs);scrollTail();
@@ -128,8 +132,11 @@ let knowledgeTimer;
 async function loadKnowledge(){const result=await api('knowledge?q='+encodeURIComponent($('#knowledge-query').value));const filter=$('#knowledge-filter').value;const files=result.files.filter(f=>!filter||f.category===filter);const box=$('#knowledge-list');box.replaceChildren();if(!files.length){box.append(el('div','empty','这里还没有匹配的文件。\n添加目录并建立索引，或换一个搜索关键词。'));return;}for(const f of files){const row=el('div','file-row');row.append(el('span','file-icon',f.category==='图片'?'▧':'▤'));const info=el('div','file-info');info.append(el('strong','',f.name),el('small','',f.path),el('small','',`${f.category} · ${(f.size/1024).toFixed(1)} KB · ${new Date(f.modified*1000).toLocaleDateString()}`));row.append(info);if(f.category!=='图片')row.append(btn('读取',()=>submit('读取 '+f.name,{tool:'file_read',arguments:{path:f.path}})));else row.append(btn('OCR',()=>submit('识别图片文字 '+f.name,{tool:'image_ocr',arguments:{path:f.path}})));box.append(row);} }
 function fillSettings(){const f=$('#settings-form');f.elements.mode.value=state.settings.mode;f.elements.base_url.value=state.settings.model.base_url||'http://127.0.0.1:11434/v1';f.elements.model.value=state.settings.model.model||'qwen3:latest';f.elements.roots.value=state.settings.roots.join('\n');}
 function pathDialog(action,title,defaultValue,hint){pathAction=action;$('#path-title').textContent=title;$('#path-hint').textContent=hint||'请输入已授权目录内的完整路径。';$('#path-value').value=defaultValue||state?.settings.roots[0]||'';$('#path-query').value='';$('#path-query').classList.toggle('hidden',action!=='files');$('#path-dialog').showModal();$('#path-value').focus();}
-$('#chat-form').onsubmit=e=>{e.preventDefault();const p=$('#prompt').value.trim();if(!p)return;safe(async()=>{await submit(p);$('#prompt').value='';});};
-$('#prompt').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('#chat-form').requestSubmit();}};
+$('#chat-form').onsubmit=e=>{e.preventDefault();const p=$('#prompt').value.trim();if(!p)return;safe(async()=>{
+ if(p.startsWith('/'))await runAppCommand(p);else await submit(p);
+ if($('#prompt').value.trim()===p)$('#prompt').value='';updateCommandMenu();
+});};
+$('#prompt').onkeydown=e=>{if(commandMenuKey(e))return;if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('#chat-form').requestSubmit();}};
 $('#new-chat').onclick=()=>safe(async()=>{
  if(!newSessionPending)newSessionPending=api('sessions',{session_id:session}).finally(()=>{newSessionPending=null;});
  const s=await newSessionPending;showArchived=false;session=s.id;showPage('chat');await renderMessages();await refresh();$('#prompt').focus();
