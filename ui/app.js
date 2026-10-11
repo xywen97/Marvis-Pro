@@ -25,7 +25,7 @@ function richText(text) {
   return new Blob([Uint8Array.from(atob(value.data),c=>c.charCodeAt(0))],{type:value.mime});
  }});
 }
-function showPage(next) { page=next;document.body.classList.toggle('office-view',next==='office');if(next==='office')MarvisOffice.render(state); document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===next));document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===next));$('#page-title').textContent={chat:'工作台',office:'办公室',knowledge:'知识库',tasks:'任务中心',workflows:'自动化',settings:'设置'}[next]; if(next==='tasks'&&state)renderTasks();if(next==='knowledge')safe(loadKnowledge);if(next==='settings'&&state)fillSettings(); }
+function showPage(next) { page=next;document.body.classList.toggle('office-view',next==='office');if(next==='office'){MarvisTeam.stop();MarvisOffice.render(state);} document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===next));document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===next));$('#page-title').textContent={chat:'工作台',office:'办公室',knowledge:'知识库',tasks:'任务中心',workflows:'自动化',settings:'设置'}[next]; if(next==='tasks'&&state)renderTasks();if(next==='knowledge')safe(loadKnowledge);if(next==='settings'&&state)fillSettings(); }
 function changed(name, value) { const sig=JSON.stringify(value); if(Object.prototype.hasOwnProperty.call(signatures,name)&&signatures[name]===sig)return false; signatures[name]=sig;return true; }
 function acceptState(value) {
  stateUpdates=stateUpdates.catch(()=>{}).then(async()=>{
@@ -63,8 +63,8 @@ function renderState() {
  $('#knowledge-badge').textContent=state.knowledge_count;$('#mode-toggle').textContent=state.settings.mode==='local'?'◉ 本地模式':'◉ 效率模式';$('#model-label').textContent=state.settings.offline?'离线工具模式':state.settings.mode==='local'?'Ollama · qwen3:latest':state.settings.model.model||'模型未配置';
  if(!$('#index-path').value)$('#index-path').value=state.settings.roots[0];
  if(changed('sessions', [state.sessions,session])) {const box=$('#sessions');box.replaceChildren();visibleSessions().forEach(s=>box.append(btn('◌  '+s.title,async()=>{session=s.id;showPage('chat');await renderMessages();renderState();},'session'+(session===s.id?' selected':''))));}
- const active=state.tasks.filter(busy), current=active.find(t=>t.status!=='queued');
- if(changed('agents',current?[current.id,current.status,current.events.filter(e=>e.kind==='tool_start').slice(-1)[0]?.content.agent]:null)) { const box=$('#agents');box.replaceChildren();const last=current?.events.filter(e=>e.kind==='tool_start').slice(-1)[0];state.agents.forEach(a=>{let working=!!current&&(a.id==='main'||a.id===last?.content.agent);const row=el('div','agent-row'+(working?' busy':''));row.append(el('div','agent-avatar',a.icon));const info=el('div','agent-info');info.append(el('strong','',a.name),el('small','',a.role));row.append(info,el('span','agent-status',working?'工作中':'待命'));box.append(row);}); }
+ const active=state.tasks.filter(busy);
+ MarvisTeam.render(state);
  const visible=active.find(t=>t.session_id===session), indicator=$('#active-task');indicator.classList.toggle('hidden',!visible);if(visible){indicator.replaceChildren(el('span','',statuses[visible.status]+' · '+visible.prompt.slice(0,40)),btn('停止',()=>api('cancel',{id:visible.id})));}
  if(page==='tasks'&&changed('tasks',state.tasks))renderTasks();
  if(changed('workflows',state.workflows))renderWorkflows();
@@ -148,4 +148,4 @@ safe(async()=>{await refresh();session=state?.sessions[0]?.id||null;await render
 setInterval(()=>{if(!liveConnected)refresh();},250);
 
 $('#office-start').onclick=()=>{showPage('chat');$('#prompt').focus();};
-setInterval(()=>{if(page==='office')MarvisOffice.render(state);},1000);
+setInterval(()=>{MarvisTeam.render(state);if(page==='office')MarvisOffice.render(state);},1000);
