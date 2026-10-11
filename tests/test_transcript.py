@@ -13,16 +13,16 @@ class TranscriptTests(unittest.TestCase):
             {'kind':'tool_start','content':{'tool':'system_info','arguments':{'section':'overview'}}},
             {'kind':'tool_result','content':{'tool':'system_info','elapsed_ms':20,'result':{'output':'物理内存\n总计：24 GB'}}},
         ]}
-        return dialogue_rows(messages,[task])
+        return dialogue_rows(messages,[task],expanded={'t:1'})
 
     def test_tree_styles_and_nested_tool_results(self):
         rows=self.sample();text='\n'.join(r.text for r in rows)
         self.assertIn('├─ 执行过程',text)
-        self.assertIn('│  └─ → 调用 system_info',text)
+        self.assertIn('│     └─ [-] → 调用 system_info',text)
         self.assertIn('└─ ✦ MarvisXY',text)
         self.assertNotIn('\\n总计',text)
         self.assertEqual(next(r.tone for r in rows if '先查询' in r.text),'thought')
-        self.assertEqual(next(r.tone for r in rows if '→ 调用' in r.text),'tool')
+        self.assertEqual(next(r.tone for r in rows if '→ 调用' in r.text),'muted')
         self.assertEqual(next(r.tone for r in rows if '执行完成' in r.text),'success')
         self.assertEqual(rows[0].tone,'user')
 

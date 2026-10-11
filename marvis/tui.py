@@ -8,7 +8,7 @@ import shlex
 import time
 import unicodedata
 from marvis.session_tree import Navigator
-from marvis.transcript import Line, dialogue_rows, process_nodes, tree, wrapped
+from marvis.transcript import Line, StreamAnimator, dialogue_rows, process_nodes, tree, wrapped
 
 PAGES = ['对话', '任务', '知识库', '自动化', '设置']
 STATUS = {'queued': '排队', 'running': '执行中', 'waiting_approval': '待确认', 'completed': '完成', 'failed': '失败', 'cancelled': '停止', 'interrupted': '中断'}
@@ -43,9 +43,10 @@ HELP = '''输入自然语言，或使用以下命令：
 /reject [TASK_ID]             拒绝操作
 /cancel [TASK_ID]             停止任务
 /trace                       展开/收起对话执行过程
+/result [N]                  展开/折叠第 N 个工具的参数与结果
 /help                        帮助
 /quit                        退出
-F1–F5 页面 · ↑↓滚动/选择联想 · Tab补全/切换页面 · Esc收起联想 · Ctrl+N新会话 · Ctrl+X停止
+F1–F5 页面 · ↑↓滚动/选择联想 · Tab补全/切换页面 · Ctrl+R工具结果 · Ctrl+N新会话 · Ctrl+X停止
 '''
 
 # Keep suggestions and /help in sync, including argument hints.
@@ -90,6 +91,9 @@ class Terminal:
         sessions = runtime.sessions(); self.session = sessions[0]['id'] if sessions else runtime.new_session()
         self.scroll = 0; self.notice = '输入 /help 查看全部命令'; self.local_text = ''; self.query = ''; self.show_trace = True
         self.navigator = None
+        self.expanded_results = set(); self.result_focus = None; self.result_actions = []; self.mouse_rows = {}
+        self.animator = StreamAnimator(); self.cached_state = None; self.state_time = 0; self.cached_messages = []; self.messages_time = 0; self.messages_session = None
+        self.rows_context=None;self.last_line_count=0
         self.completion_key = None; self.completion_index = 0; self.completion_hidden = False
 
     def suggestions(self):
@@ -115,6 +119,7 @@ class Terminal:
         self.session = task['session_id']; self.local_text = ''; self.page = 0; self.scroll = 0
 
     def command(self, text):
+        self.state_time=0;self.messages_time=0
         if not text.startswith('/'):
             task = self.runtime.submit(text, self.session); self.session = task['session_id']; self.local_text = ''; self.page = 0
             return True
@@ -139,6 +144,12 @@ class Terminal:
             name, build = tools[cmd]; self.task(name, build(), text)
         elif cmd == '/quit': return False
         elif cmd == '/trace': self.show_trace = not self.show_trace
+        elif cmd == '/result':
+            self.dialogue(self.runtime.snapshot())
+            if not self.result_actions: raise ValueError('当前对话没有工具结果。')
+            index = int(rest[0]) - 1 if rest else len(self.result_actions) - 1
+            if not 0 <= index < len(self.result_actions): raise ValueError('工具序号超出范围。')
+            self.toggle_result(self.result_actions[index])
         elif cmd == '/help': self.local_text = HELP; self.page = 0
         elif cmd == '/new': self.session = self.runtime.new_session(); self.local_text = ''; self.page = 0
         elif cmd == '/tree':
@@ -173,7 +184,30 @@ class Terminal:
         return '\n'.join(row.text for row in tree(process_nodes(task, include_stream)))
 
     def dialogue(self, snapshot):
-        return dialogue_rows(self.runtime.messages(self.session), snapshot.get('tasks', []), self.show_trace)
+        rows = dialogue_rows(self.messages(), snapshot.get('tasks', []), self.show_trace, self.expanded_results, int(time.monotonic()*10))
+        self.result_actions = list(dict.fromkeys(row.action for row in rows if row.action))
+        return rows
+
+    def messages(self):
+        now=time.monotonic()
+        if self.messages_session != self.session or now-self.messages_time >= .1:
+            self.cached_messages=self.runtime.messages(self.session);self.messages_time=now;self.messages_session=self.session
+        return self.cached_messages
+
+    def toggle_result(self, key):
+        if key in self.expanded_results:self.expanded_results.remove(key)
+        else:self.expanded_results.add(key)
+
+    def result_key(self, key):
+        if key in ('\x1b','\x12'):self.result_focus=None;return
+        if not self.result_actions:self.result_focus=None;return
+        index=self.result_actions.index(self.result_focus) if self.result_focus in self.result_actions else 0
+        if key in (curses.KEY_UP,curses.KEY_DOWN):
+            index=max(0,min(len(self.result_actions)-1,index+(-1 if key==curses.KEY_UP else 1)))
+            self.result_focus=self.result_actions[index]
+        elif key in ('\n','\r',curses.KEY_ENTER):self.toggle_result(self.result_focus)
+        elif key==curses.KEY_RIGHT:self.expanded_results.add(self.result_focus)
+        elif key==curses.KEY_LEFT:self.expanded_results.discard(self.result_focus)
 
     @staticmethod
     def line_attr(tone):
@@ -187,9 +221,9 @@ class Terminal:
     def content(self, snapshot):
         if self.page == 0:
             if self.local_text: return self.local_text
-            msgs = self.runtime.messages(self.session)
+            msgs = self.messages()
             if not msgs: return '✦  MarvisXY — 你的个人 AI 工作台\n\n把琐事交给我，专注你想做的事。\n\n/files "目录" 关键词       搜索文件\n/system disk              检查磁盘\n/index "目录"             建立知识库\n/organize "目录"          整理预览与确认\n\n输入任务后，工具在后台执行。F2 查看完整执行记录。\n输入 /help 查看所有命令。'
-            return '\n'.join(row.text for row in dialogue_rows(msgs, snapshot.get('tasks', []), self.show_trace))
+            return '\n'.join(row.text for row in self.dialogue(snapshot))
         if self.page == 1:
             out = []
             for t in snapshot['tasks']:
@@ -273,7 +307,10 @@ class Terminal:
             except curses.error: pass
         if h < 15 or w < 60:
             put(0,0,'窗口过小，请调整至至少 60×15；Ctrl+C 退出。'); screen.refresh(); return
-        state = self.runtime.snapshot()
+        now=time.monotonic()
+        if self.cached_state is None or now-self.state_time>=.1:
+            self.cached_state=self.runtime.snapshot();self.state_time=now
+        state = self.animator.apply(self.cached_state,now)
         mode = '本地' if state['settings']['mode']=='local' else '效率'
         put(0,2,'m✦  MarvisXY',curses.color_pair(1)|curses.A_BOLD);put(0,23,f'{mode}模式 · 本地工作空间',curses.color_pair(2))
         x=2
@@ -286,12 +323,26 @@ class Terminal:
         menu_space = menu_rows + 1 if suggestions else 0
         footer=(8 if pending else 4) + menu_space
         available=h-footer-5
-        if self.page == 0 and not self.local_text and self.runtime.messages(self.session):
+        if self.page == 0 and not self.local_text and self.messages():
             lines = wrapped(self.dialogue(state), w - 6)
         else:
             lines = [Line(line) for line in wrap(self.content(state), w - 6)]
+        context=(self.session,self.page,self.local_text,w)
+        if self.page==0 and not self.local_text and context==self.rows_context and self.scroll>0 and self.result_focus is None:
+            self.scroll=max(0,self.scroll+len(lines)-self.last_line_count)
+        self.rows_context=context;self.last_line_count=len(lines)
         start=max(0,len(lines)-available-self.scroll) if self.page==0 and not self.local_text else self.scroll
-        for i,line in enumerate(lines[start:start+available]):put(5+i,3,line.text,self.line_attr(line.tone))
+        if self.result_focus:
+            index=next((i for i,line in enumerate(lines) if line.action==self.result_focus),None)
+            if index is not None and not start<=index<start+available:
+                start=max(0,index-available//2);self.scroll=max(0,len(lines)-available-start)
+        self.mouse_rows = {}
+        for i,line in enumerate(lines[start:start+available]):
+            attr=self.line_attr(line.tone)
+            if line.action:
+                self.mouse_rows[5+i]=line.action
+                if line.action==self.result_focus:attr|=curses.A_REVERSE
+            put(5+i,3,line.text,attr)
         if pending:
             put(h-8-menu_space,2,'◇ 待确认：'+pending['approval']['action'],curses.color_pair(3)|curses.A_BOLD)
             plan=pending['approval']; details=plan.get('path') or plan.get('target') or plan.get('arguments') or str(plan.get('count',''))+' 个文件'
@@ -309,13 +360,15 @@ class Terminal:
         # Keep the insertion cursor visible even for long Chinese input.
         left=0
         while width(self.input[left:self.cursor])>w-8:left+=1
-        put(h-3,4,self.input[left:]);put(h-1,2,self.notice,curses.color_pair(2))
+        put(h-3,4,self.input[left:]);put(h-1,2,'工具结果：↑↓选择 · Enter切换 · ←折叠 · →展开 · Esc返回' if self.result_focus else self.notice,curses.color_pair(2))
         try:screen.move(h-3,4+width(self.input[left:self.cursor]))
         except curses.error:pass
-        screen.refresh()
+        screen.noutrefresh();curses.doupdate()
 
     def run(self, screen):
-        curses.curs_set(1);screen.keypad(True);screen.timeout(150)
+        curses.curs_set(1);screen.keypad(True);screen.timeout(30)
+        try:curses.mousemask(curses.BUTTON1_CLICKED)
+        except curses.error:pass
         if curses.has_colors():
             curses.start_color();curses.use_default_colors();curses.init_pair(1,curses.COLOR_CYAN,-1);curses.init_pair(2,curses.COLOR_BLUE,-1);curses.init_pair(3,curses.COLOR_YELLOW,-1)
             curses.init_pair(4, curses.COLOR_GREEN, -1)
@@ -323,12 +376,24 @@ class Terminal:
             curses.init_pair(6, 245 if curses.COLORS >= 256 else curses.COLOR_WHITE, -1)
         active=True
         while active:
+            screen.timeout(30 if self.page==0 and not self.local_text and self.navigator is None else 150)
             self.draw(screen)
             try:k=screen.get_wch()
             except curses.error:continue
             try:
                 if self.navigator is not None:
                     self.tree_key(k); continue
+                if k==curses.KEY_MOUSE:
+                    try:_,_,y,_,buttons=curses.getmouse()
+                    except curses.error:continue
+                    if buttons&curses.BUTTON1_CLICKED and y in self.mouse_rows:self.toggle_result(self.mouse_rows[y])
+                    continue
+                if self.result_focus is not None:
+                    self.result_key(k);continue
+                if k=='\x12':
+                    if self.page==0 and self.result_actions:self.result_focus=self.result_actions[-1]
+                    else:self.notice='当前对话没有工具结果。'
+                    continue
                 if k in ('\n','\r',curses.KEY_ENTER):
                     if self.input.strip():
                         text = self.input.strip(); self.input = ''; self.cursor = 0

@@ -198,16 +198,17 @@ class Runtime:
     def _check(self, ident):
         if self.closed.is_set() or self.cancels[ident].is_set(): raise Cancelled('任务已停止。')
 
-    def _tool(self, ident, caps, name, args):
+    def _tool(self, ident, caps, name, args, step=0, call_id=None):
         self._check(ident)
         group = 'search' if name in ('knowledge_search', 'web_search') else 'computer' if name.startswith('system_') else 'app' if name.startswith('app_') else 'browser' if name.startswith('browser_') else 'file'
-        self.store.event(ident, 'tool_start', {'agent': group, 'tool': name, 'arguments': args})
+        context = {'step': step, 'call_id': call_id or uid()}
+        self.store.event(ident, 'tool_start', {'agent': group, 'tool': name, 'arguments': args, **context})
         plan = None
         if name in MUTATIONS:
             plan = caps.preview(name, args)
             pending = {'plan': {'tool': name, **plan}, 'approved': False, 'event': threading.Event()}
             with self.lock: self.approvals[ident] = pending
-            self.status(ident, 'waiting_approval'); self.store.event(ident, 'approval', pending['plan'])
+            self.status(ident, 'waiting_approval'); self.store.event(ident, 'approval', {**pending['plan'], **context})
             deadline = time.monotonic() + 300
             while not pending['event'].wait(.2):
                 self._check(ident)
@@ -218,16 +219,16 @@ class Runtime:
             if not pending['approved']:
                 self.store.event(ident, 'rejected', {'text': '用户拒绝了操作。'})
                 return {'rejected': True, 'message': '用户拒绝此操作；不要再次尝试。'}
-            self.store.event(ident, 'approved', {'tool': name})
+            self.store.event(ident, 'approved', {'tool': name, **context})
         try:
             started = time.monotonic()
             result = caps.execute(name, args, plan)
-            self.store.event(ident, 'tool_result', {'agent': group, 'tool': name, 'result': result, 'elapsed_ms': round((time.monotonic() - started) * 1000)})
+            self.store.event(ident, 'tool_result', {'agent': group, 'tool': name, 'result': result, 'elapsed_ms': round((time.monotonic() - started) * 1000), **context})
             self._check(ident)
             return result
         except Cancelled: raise
         except Exception as e:
-            self.store.event(ident, 'tool_error', {'agent': group, 'tool': name, 'text': str(e)})
+            self.store.event(ident, 'tool_error', {'agent': group, 'tool': name, 'text': str(e), **context})
             raise
 
     @staticmethod
@@ -282,6 +283,19 @@ class Runtime:
     def _model_turn(self, ident, client, messages, step, tool_choice='auto'):
         self.store.event(ident, 'model_start', {'text': '正在生成处理方案与回复', 'step': step, 'model': client.model})
         parts = []; event_id = None; last_flush = 0.0
+        tool_events = {}; tool_parts = {}
+        def tool_delta(index, call):
+            self._check(ident)
+            data = {'step': step, 'index': index, 'call_id': call['id'], 'tool': call['function']['name'], 'arguments': call['function']['arguments']}
+            tool_parts[index] = data
+            now = time.monotonic()
+            previous = tool_events.get(index)
+            if previous and now - previous[1] < .1: return
+            if previous:
+                self.store.execute('UPDATE events SET content=? WHERE id=?', (json.dumps(data, ensure_ascii=False), previous[0]))
+                self.status(ident, 'running'); ident_event = previous[0]
+            else: ident_event = self.store.event(ident, 'tool_call_stream', data)
+            tool_events[index] = (ident_event, now)
         def flush(force=False):
             nonlocal event_id, last_flush
             now = time.monotonic()
@@ -294,11 +308,15 @@ class Runtime:
             last_flush = now
         def delta(text):
             self._check(ident); parts.append(text); flush()
-        result = client.chat(messages, tools=TOOLS, tool_choice=tool_choice, on_delta=delta)
+        result = client.chat(messages, tools=TOOLS, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta)
         self._check(ident)
         flush(True)
+        for index, data in tool_parts.items():
+            self.store.execute('UPDATE events SET content=? WHERE id=?', (json.dumps(data, ensure_ascii=False), tool_events[index][0]))
+            self.status(ident, 'running')
         # Providers may ignore stream=true. Their public text still appears in the timeline.
         if result.ok and result.content and not parts:
+            self.store.event(ident, 'stream_fallback', {'text': '模型服务返回了完整响应，本轮未提供分段输出。'})
             parts.append(result.content); flush(True)
         if result.ok and result.tool_calls and event_id:
             self.store.execute("UPDATE events SET kind='assistant_note' WHERE id=?", (event_id,))
@@ -336,7 +354,7 @@ class Runtime:
                 try:
                     args = json.loads(fn.get('arguments') or '{}')
                     if not isinstance(args, dict): raise ValueError('工具参数必须为对象。')
-                    out = self._tool(ident, caps, fn.get('name', ''), args)
+                    out = self._tool(ident, caps, fn.get('name', ''), args, step=step + 1, call_id=tc['id'])
                 except Cancelled: raise
                 except Exception as e: out = {'error': str(e)}
                 messages.append({'role': 'tool', 'tool_call_id': tc['id'], 'content': json.dumps(out, ensure_ascii=False)[:24000]})

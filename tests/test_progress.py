@@ -17,7 +17,9 @@ class ProgressTests(unittest.TestCase):
             {'kind':'tool_start','content':{'tool':'system_info','arguments':{'section':'disk'}}},
         ]}
         terminal=Terminal(runtime);output=terminal.content({'tasks':[task]})
-        self.assertIn('→ 调用 system_info',output);self.assertIn('disk',output);self.assertIn('执行中',output)
+        self.assertIn('→ 调用 system_info',output);self.assertNotIn('disk',output);self.assertIn('执行中',output)
+        terminal.toggle_result(terminal.result_actions[0]);output=terminal.content({'tasks':[task]})
+        self.assertIn('disk',output)
         task['events'].append({'kind':'tool_result','content':{'tool':'system_info','result':{'free_gb':500},'elapsed_ms':20}})
         task['status']='completed'
         runtime.messages.return_value.append({'role':'assistant','content':'磁盘检查完成','task_id':'task'})
@@ -56,11 +58,26 @@ class ProgressTests(unittest.TestCase):
                 {'choices':[{'delta':{'content':'电脑','tool_calls':[{'index':0,'id':'call','function':{'name':'system_info','arguments':'{"sec'}}]}}]},
                 {'choices':[{'delta':{'tool_calls':[{'index':0,'function':{'arguments':'tion":"disk"}'}}]},'finish_reason':'tool_calls'}]}]
         lines=[('data: '+json.dumps(c)+'\n').encode() for c in chunks]+[b'data: [DONE]\n']
-        response=Mock();response.headers={'Content-Type':'text/event-stream'}
+        response=Mock();response.headers={'Content-Type':'Text/Event-Stream; charset=utf-8'}
         response.__iter__=Mock(return_value=iter(lines));response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
-        opener=Mock();opener.open.return_value=response;parts=[]
+        opener=Mock();opener.open.return_value=response;parts=[];tool_parts=[]
         with patch('urllib.request.build_opener',return_value=opener):
-            result=LLMClient(base_url='http://localhost/v1',model='test',api_key='local').chat([],on_delta=parts.append)
+            result=LLMClient(base_url='http://localhost/v1',model='test',api_key='local').chat([],on_delta=parts.append,on_tool_delta=lambda index,call:tool_parts.append((index,call['id'],call['function']['arguments'])))
         self.assertTrue(result.ok,result.error);self.assertEqual(parts,['检查','电脑'])
         self.assertEqual(json.loads(result.tool_calls[0]['function']['arguments']),{'section':'disk'})
         self.assertNotIn('private reasoning',result.content)
+        self.assertEqual(tool_parts,[(0,'call','{"sec'),(0,'call','{"section":"disk"}')])
+
+    def test_provider_without_streaming_is_identified(self):
+        with tempfile.TemporaryDirectory() as folder:
+            runtime=Runtime(folder)
+            try:
+                with patch.object(LLMClient,'configured',new_callable=lambda:property(lambda s:True)),patch.object(LLMClient,'chat',return_value=ChatResult.success('一次性响应')):
+                    task=runtime.submit('请写一句问候')
+                    deadline=time.time()+3
+                    while runtime.store.one('SELECT status FROM tasks WHERE id=?',(task['id'],))['status']!='completed':
+                        self.assertLess(time.time(),deadline);time.sleep(.01)
+                events=runtime.store.events(task['id'])
+                self.assertTrue(any(e['kind']=='stream_fallback' for e in events))
+                self.assertTrue(any(e['kind']=='assistant_stream' and e['content']['text']=='一次性响应' for e in events))
+            finally:runtime.close()

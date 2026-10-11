@@ -47,8 +47,19 @@ class ServerTests(unittest.TestCase):
     def test_auth_and_cross_origin_denied(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:self.request('/api/state',token='bad')
         self.assertEqual(ctx.exception.code,403)
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/live',token='bad')
         with self.assertRaises(urllib.error.HTTPError) as ctx:self.request('/api/tasks',{'prompt':'x'},origin='https://evil.example')
         self.assertEqual(ctx.exception.code,403)
+    def test_live_pushes_state_changes_before_connection_ends(self):
+        request=urllib.request.Request(self.base+'/api/live',headers={'X-Marvis-Token':self.token})
+        with urllib.request.urlopen(request,timeout=3) as response:
+            self.assertIn('text/event-stream',response.headers['Content-Type'])
+            first=response.readline().decode();self.assertTrue(first.startswith('data: '))
+            self.assertEqual(json.loads(first[6:])['sessions'],[])
+            self.assertEqual(response.readline(),b'\n')
+            sid=self.runtime.new_session()
+            updated=json.loads(response.readline().decode()[6:])
+            self.assertEqual(updated['sessions'][0]['id'],sid)
     def test_sessions_and_task_submission(self):
         _,body,_=self.request('/api/sessions',{});sid=json.loads(body)['id']
         _,body,_=self.request('/api/tasks',{'prompt':'检查磁盘空间','session_id':sid})

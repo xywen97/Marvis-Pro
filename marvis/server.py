@@ -2,7 +2,9 @@
 from __future__ import annotations
 import json
 import secrets
+import sqlite3
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -28,10 +30,30 @@ def serve(runtime, port=0):
             origin = self.headers.get('Origin')
             if origin and origin != 'http://' + expected: return False
             return secrets.compare_digest(self.headers.get('X-Marvis-Token', ''), token)
+        def live(self):
+            # fetch streaming preserves header authentication; tokens never enter URLs.
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            previous = None; deadline = time.monotonic() + 25
+            try:
+                while time.monotonic() < deadline:
+                    snapshot = runtime.snapshot()
+                    payload = json.dumps(snapshot, ensure_ascii=False, separators=(',', ':'))
+                    if payload != previous:
+                        self.wfile.write(('data: ' + payload + '\n\n').encode('utf-8'))
+                        self.wfile.flush(); previous = payload
+                    time.sleep(.1 if any(t['status'] in ('queued','running','waiting_approval') for t in snapshot['tasks']) else .5)
+            except (OSError, ValueError, sqlite3.Error): pass  # Client closed or engine stopped.
+            finally: self.close_connection = True
         def do_GET(self):
             parsed = urlparse(self.path)
             if parsed.path.startswith('/api/'):
                 if not self.authorized(): return self.response(403, {'error': '访问令牌无效。'})
+                if parsed.path == '/api/live': return self.live()
                 try:
                     if parsed.path == '/api/state': value = runtime.snapshot()
                     elif parsed.path == '/api/messages': value = runtime.messages(parse_qs(parsed.query).get('session', [''])[0])
@@ -43,7 +65,7 @@ def serve(runtime, port=0):
                 except Exception as e: return self.response(400, {'error': str(e)})
             if self.headers.get('Host') != f'127.0.0.1:{self.server.server_port}': return self.response(403, {'error': '不允许此 Host。'})
             files = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}
-            for name in ('markdown.js', 'vendor/marked.js', 'vendor/purify.js', 'vendor/highlight.js'):
+            for name in ('markdown.js', 'progress.js', 'vendor/marked.js', 'vendor/purify.js', 'vendor/highlight.js'):
                 files['/' + name] = (name, 'text/javascript; charset=utf-8')
             files['/vendor/highlight.css'] = ('vendor/highlight.css', 'text/css; charset=utf-8')
             if parsed.path not in files: return self.response(404, {'error': '文件不存在。'})
