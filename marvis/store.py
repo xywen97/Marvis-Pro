@@ -31,7 +31,7 @@ class Store:
         ''')
         # Upgrade linear histories once; preserve all original message IDs and content.
         old_messages = 'parent_id' not in {r[1] for r in self.db.execute('PRAGMA table_info(messages)')}
-        for table, name, declaration in [('sessions', 'active_leaf', 'TEXT'), ('messages', 'parent_id', 'TEXT'), ('messages', 'label', "TEXT DEFAULT ''")]:
+        for table, name, declaration in [('sessions', 'archived', 'INTEGER NOT NULL DEFAULT 0'), ('sessions', 'active_leaf', 'TEXT'), ('messages', 'parent_id', 'TEXT'), ('messages', 'label', "TEXT DEFAULT ''")]:
             if name not in {r[1] for r in self.db.execute('PRAGMA table_info(' + table + ')')}:
                 self.db.execute(f'ALTER TABLE {table} ADD COLUMN {name} {declaration}')
         if old_messages:

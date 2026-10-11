@@ -8,10 +8,10 @@ let liveConnected = false, liveAbort = null, stateUpdates = Promise.resolve(), m
 const signatures = {};
 const statuses = {queued:'排队中',running:'执行中',waiting_approval:'等待确认',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断'};
 const busy = t => ['queued','running','waiting_approval'].includes(t.status);
-let newSessionPending=null;
+let newSessionPending=null, showArchived=false, deletingSession=null;
 function visibleSessions() {
  const empty=state.sessions.find(s=>s.id===session&&s.is_empty)||state.sessions.find(s=>s.is_empty);
- return state.sessions.filter(s=>!s.is_empty||s.id===empty?.id);
+ return showArchived?(state.archived_sessions||[]):state.sessions.filter(s=>!s.is_empty||s.id===empty?.id);
 }
 function el(tag, cls, text) { const e = document.createElement(tag); if(cls)e.className=cls; if(text!==undefined)e.textContent=text; return e; }
 function btn(text, callback, cls='') { const b=el('button',cls,text); b.type='button'; b.onclick=()=>safe(callback); return b; }
@@ -29,8 +29,10 @@ function showPage(next) { page=next;document.body.classList.toggle('office-view'
 function changed(name, value) { const sig=JSON.stringify(value); if(Object.prototype.hasOwnProperty.call(signatures,name)&&signatures[name]===sig)return false; signatures[name]=sig;return true; }
 function acceptState(value) {
  stateUpdates=stateUpdates.catch(()=>{}).then(async()=>{
-  state=value;$('#connection').textContent='● 已连接';$('#connection').style.color='';renderState();
-  if(session&&changed('messages-session',[session,state.sessions.find(s=>s.id===session)?.active_leaf,state.tasks.filter(t=>t.session_id===session).map(t=>[t.id,t.status,t.updated])]))await renderMessages();
+  state=value;
+  if(session&&!allSessions().some(s=>s.id===session)){session=state.sessions[0]?.id||null;$('#prompt').value='';await renderMessages();}
+  $('#connection').textContent='● 已连接';$('#connection').style.color='';renderState();
+  if(session&&changed('messages-session',[session,allSessions().find(s=>s.id===session)?.active_leaf,state.tasks.filter(t=>t.session_id===session).map(t=>[t.id,t.status,t.updated])]))await renderMessages();
  });
  return stateUpdates;
 }
@@ -62,7 +64,8 @@ function renderState() {
  if(page==='office')MarvisOffice.render(state);
  $('#knowledge-badge').textContent=state.knowledge_count;$('#mode-toggle').textContent=state.settings.mode==='local'?'◉ 本地模式':'◉ 效率模式';$('#model-label').textContent=state.settings.offline?'离线工具模式':state.settings.mode==='local'?'Ollama · qwen3:latest':state.settings.model.model||'模型未配置';
  if(!$('#index-path').value)$('#index-path').value=state.settings.roots[0];
- if(changed('sessions', [state.sessions,session])) {const box=$('#sessions');box.replaceChildren();visibleSessions().forEach(s=>box.append(btn('◌  '+s.title,async()=>{session=s.id;showPage('chat');await renderMessages();renderState();},'session'+(session===s.id?' selected':''))));}
+ renderSessionList();
+ updateComposer();
  const active=state.tasks.filter(busy);
  MarvisTeam.render(state);
  const visible=active.find(t=>t.session_id===session), indicator=$('#active-task');indicator.classList.toggle('hidden',!visible);if(visible){indicator.replaceChildren(el('span','',statuses[visible.status]+' · '+visible.prompt.slice(0,40)),btn('停止',()=>api('cancel',{id:visible.id})));}
@@ -90,6 +93,7 @@ $('#chat-scroll').addEventListener('scroll',()=>{
 },{passive:true});
 document.addEventListener('agent-content-resize',scrollTail);
 async function renderMessages() {
+ updateComposer();
  const currentSession=session, version=++messageVersion;
  const messages=session?await api('messages?session='+encodeURIComponent(session)):[];
  if(version!==messageVersion||session!==currentSession)return;
@@ -127,7 +131,7 @@ $('#chat-form').onsubmit=e=>{e.preventDefault();const p=$('#prompt').value.trim(
 $('#prompt').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('#chat-form').requestSubmit();}};
 $('#new-chat').onclick=()=>safe(async()=>{
  if(!newSessionPending)newSessionPending=api('sessions',{session_id:session}).finally(()=>{newSessionPending=null;});
- const s=await newSessionPending;session=s.id;showPage('chat');await renderMessages();await refresh();$('#prompt').focus();
+ const s=await newSessionPending;showArchived=false;session=s.id;showPage('chat');await renderMessages();await refresh();$('#prompt').focus();
 });
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>safe(()=>submit(b.dataset.prompt)));
@@ -149,3 +153,40 @@ setInterval(()=>{if(!liveConnected)refresh();},250);
 
 $('#office-start').onclick=()=>{showPage('chat');$('#prompt').focus();};
 setInterval(()=>{MarvisTeam.render(state);if(page==='office')MarvisOffice.render(state);},1000);
+
+function allSessions(){return [...(state?.sessions||[]),...(state?.archived_sessions||[])];}
+function renderSessionList(){
+ if(!changed('sessions',[state.sessions,state.archived_sessions,session,showArchived,state.tasks.filter(busy).map(t=>t.session_id)]))return;
+ $('#session-list-title').textContent=showArchived?'已归档对话':'最近对话';
+ $('#session-archive-toggle').textContent=showArchived?'返回最近':'已归档';
+ const box=$('#sessions');box.replaceChildren();
+ for(const s of visibleSessions()){
+  const row=el('div','session-entry'+(session===s.id?' selected':''));row.dataset.session=s.id;
+  const open=btn('◌  '+s.title,async()=>{session=s.id;showPage('chat');await renderMessages();renderState();},'session'+(session===s.id?' selected':''));row.append(open);
+  const menu=el('details','session-menu'),trigger=el('summary','','⋯');trigger.setAttribute('aria-label','管理对话：'+s.title);menu.append(trigger);
+  const actions=el('div','session-menu-actions');const running=state.tasks.some(t=>t.session_id===s.id&&busy(t));
+  const archive=btn(s.archived?'恢复对话':'归档对话',()=>manageSession(s.id,s.archived?'restore':'archive'));
+  const remove=btn('删除对话',()=>{deletingSession=s.id;$('#session-delete-description').textContent='“'+s.title+'”';$('#session-delete-dialog').showModal();},'danger');
+  for(const action of [archive,remove]){action.disabled=running;if(running)action.title='请等待或停止正在执行的任务';actions.append(action);}
+  menu.append(actions);row.append(menu);box.append(row);
+ }
+ if(!box.children.length)box.append(el('p','session-empty',showArchived?'没有已归档的对话':'还没有对话'));
+}
+async function manageSession(id,action){
+ await api('session-action',{session_id:id,action});
+ if(action==='delete'){$('#session-delete-dialog').close();deletingSession=null;}
+ if(session===id&&action!=='restore'){session=null;$('#prompt').value='';}
+ if(action==='restore'){showArchived=false;session=id;}
+ await refresh();if(!session)session=state.sessions[0]?.id||null;
+ await renderMessages();renderState();toast(action==='archive'?'对话已归档':action==='restore'?'对话已恢复':'对话已删除');
+}
+$('#session-archive-toggle').onclick=()=>{showArchived=!showArchived;renderSessionList();};
+$('#session-delete-cancel').onclick=()=>{$('#session-delete-dialog').close();deletingSession=null;};
+$('#session-delete-confirm').onclick=()=>safe(async()=>{const id=deletingSession;if(!id)return;const button=$('#session-delete-confirm');button.disabled=true;try{await manageSession(id,'delete');}finally{button.disabled=false;}});
+document.addEventListener('click',event=>{document.querySelectorAll('.session-menu[open]').forEach(menu=>{if(!menu.contains(event.target))menu.open=false;});});
+
+function updateComposer(){
+ const archived=!!allSessions().find(s=>s.id===session)?.archived;
+ $('#prompt').disabled=archived;$('#chat-form .send').disabled=archived;
+ $('#prompt').placeholder=archived?'已归档的对话：请先恢复后再继续':'告诉我，你想完成什么…';
+}

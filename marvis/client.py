@@ -18,7 +18,8 @@ class RemoteRuntime:
             raise ValueError(json.loads(e.read()).get('error','服务请求失败'))
     def snapshot(self):return self.call('state')
     def settings(self):return self.snapshot()['settings']
-    def sessions(self):return self.snapshot()['sessions']
+    def sessions(self, archived=False):return self.snapshot()['archived_sessions' if archived else 'sessions']
+    def session_action(self, session_id, action):return self.call('session-action',{'session_id':session_id,'action':action})
     def messages(self, session_id):return self.call('messages?session='+session_id)
     def image(self, path):
         from urllib.parse import quote

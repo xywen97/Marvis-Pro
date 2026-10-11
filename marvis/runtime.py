@@ -99,17 +99,36 @@ class Runtime:
                 raise ValueError('会话不存在。')
             # Check the whole tree, not just the active branch at the root.
             empty = self.store.rows('''SELECT s.id FROM sessions s
-                WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id=s.id)
+                WHERE s.archived=0 AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id=s.id)
                   AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.session_id=s.id)
                 ORDER BY s.created DESC''')
             if session_id and any(s['id']==session_id for s in empty): return session_id
             return empty[0]['id'] if empty else self.store.session()
 
-    def sessions(self):
+    def sessions(self, archived=False):
         return self.store.rows('''SELECT s.*,
             (NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id=s.id)
              AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.session_id=s.id)) AS is_empty
-            FROM sessions s ORDER BY created DESC LIMIT 100''')
+            FROM sessions s WHERE s.archived=? ORDER BY created DESC LIMIT 100''', (int(archived),))
+
+    def session_action(self, session_id, action):
+        if action not in ('archive', 'restore', 'delete'): raise ValueError('不支持的会话操作。')
+        with self.lock, self.store.lock:
+            if not self.store.one('SELECT id FROM sessions WHERE id=?', (session_id,)): raise ValueError('会话不存在。')
+            tasks = self.store.rows('SELECT id,status FROM tasks WHERE session_id=?', (session_id,))
+            if any(t['status'] in ('queued','running','waiting_approval') or t['id'] in self.cancels for t in tasks):
+                raise ValueError('该对话还有任务正在执行，请停止或等待任务结束后再操作。')
+            # One transaction removes the entire tree and its execution history.
+            with self.store.db:
+                if action == 'delete':
+                    self.store.db.execute('DELETE FROM events WHERE task_id IN (SELECT id FROM tasks WHERE session_id=?)', (session_id,))
+                    self.store.db.execute('UPDATE workflows SET last_task=NULL WHERE last_task IN (SELECT id FROM tasks WHERE session_id=?)', (session_id,))
+                    self.store.db.execute('DELETE FROM messages WHERE session_id=?', (session_id,))
+                    self.store.db.execute('DELETE FROM tasks WHERE session_id=?', (session_id,))
+                    self.store.db.execute('DELETE FROM sessions WHERE id=?', (session_id,))
+                else:
+                    self.store.db.execute('UPDATE sessions SET archived=? WHERE id=?', (int(action == 'archive'),session_id))
+            return {'id': session_id, 'action': action}
 
     def messages(self, session_id):
         session = self.store.one('SELECT active_leaf FROM sessions WHERE id=?', (session_id,))
@@ -164,7 +183,7 @@ class Runtime:
             with self.lock:
                 pending = self.approvals.get(task['id'])
                 task['approval'] = pending['plan'] if pending else None
-        return {'settings': self.settings(), 'sessions': self.sessions(), 'tasks': tasks, 'agents': AGENTS,
+        return {'settings': self.settings(), 'sessions': self.sessions(), 'archived_sessions': self.sessions(True), 'tasks': tasks, 'agents': AGENTS,
                 'workflows': self.store.rows('SELECT * FROM workflows ORDER BY next_run'),
                 'knowledge_count': self.store.one('SELECT count(*) AS n FROM documents')['n']}
 
@@ -176,6 +195,8 @@ class Runtime:
             if self.store.one("SELECT count(*) AS n FROM tasks WHERE status IN ('queued','running','waiting_approval')")['n'] >= 20:
                 raise ValueError('任务队列已满，请等待当前任务完成。')
             if session_id and not self.store.one('SELECT id FROM sessions WHERE id=?', (session_id,)): raise ValueError('会话不存在。')
+            if session_id and self.store.one('SELECT archived FROM sessions WHERE id=?', (session_id,))['archived']:
+                raise ValueError('请先恢复已归档的对话，再发送消息。')
             session_id = session_id or self.store.session(prompt[:24])
             ident = uid(); now = time.time()
             self.store.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?,?)', (ident, session_id, prompt, 'queued', '', now, now))

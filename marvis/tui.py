@@ -16,6 +16,10 @@ HELP = '''输入自然语言，或使用以下命令：
 /new                         新建对话
 /tree [NODE_ID]              会话树：历史跳转、编辑重发、分支切换
 /sessions                    列出会话 ID
+/archives                    列出已归档会话
+/archive [ID]                归档指定或当前对话
+/restore ID                  恢复已归档对话
+/delete ID --confirm         永久删除对话及执行记录
 /session ID                  切换历史会话
 /files PATH [KEYWORD]        文件名和内容搜索
 /read PATH                   读取文档
@@ -156,6 +160,16 @@ class Terminal:
             if rest: self.select_tree(rest[0])
             else: self.navigator = Navigator(self.runtime.session_tree(self.session))
         elif cmd == '/sessions': self.local_text = '\n'.join(f"{s['id']}  {s['title']}" for s in self.runtime.sessions()); self.page = 0
+        elif cmd == '/archives': self.local_text = '\n'.join(f"{s['id']}  {s['title']}" for s in self.runtime.sessions(True)) or '没有已归档的对话'; self.page = 0
+        elif cmd in ('/archive', '/restore', '/delete'):
+            target = rest[0] if rest else self.session
+            if cmd == '/delete' and (len(rest) != 2 or rest[1] != '--confirm'):
+                raise ValueError('永久删除会清理全部分支和执行记录；确认请使用 /delete ID --confirm。')
+            self.runtime.session_action(target, {'/archive':'archive','/restore':'restore','/delete':'delete'}[cmd])
+            if cmd == '/restore': self.session = target
+            elif target == self.session:
+                available = self.runtime.sessions(); self.session = available[0]['id'] if available else self.runtime.new_session()
+            self.local_text = ''; self.page = 0; self.navigator = None; self.notice = '对话已' + {'/archive':'归档','/restore':'恢复','/delete':'删除'}[cmd]
         elif cmd == '/session':
             if not any(s['id'] == rest[0] for s in self.runtime.sessions()): raise ValueError('会话不存在。')
             self.session = rest[0]; self.local_text = ''; self.page = 0

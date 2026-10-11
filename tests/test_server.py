@@ -65,3 +65,13 @@ class ServerTests(unittest.TestCase):
         _,body,_=self.request('/api/tasks',{'prompt':'检查磁盘空间','session_id':sid})
         self.assertEqual(json.loads(body)['session_id'],sid)
         _,body,_=self.request('/api/messages?session='+sid);self.assertEqual(json.loads(body)[0]['role'],'user')
+
+    def test_session_archive_restore_delete_api(self):
+        sid=self.runtime.new_session();self.runtime.store.add_message(sid,'user','保留历史')
+        self.request('/api/session-action',{'session_id':sid,'action':'archive'})
+        _,body,_=self.request('/api/state');value=json.loads(body)
+        self.assertEqual(value['sessions'],[]);self.assertEqual(value['archived_sessions'][0]['id'],sid)
+        self.request('/api/session-action',{'session_id':sid,'action':'restore'})
+        self.assertEqual(self.runtime.messages(sid)[0]['content'],'保留历史')
+        self.request('/api/session-action',{'session_id':sid,'action':'delete'})
+        self.assertEqual(self.runtime.sessions(),[])
