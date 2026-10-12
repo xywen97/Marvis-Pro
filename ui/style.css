@@ -67,7 +67,8 @@
 /* Conversation controls and slash commands */
 .bubble-actions{display:flex;gap:6px;margin-top:10px;opacity:.65}
 .bubble-actions:hover,.bubble-actions:focus-within{opacity:1}
-.bubble-actions button{border:0;background:transparent;color:#7c8ca4;width:32px;height:32px;border-radius:8px;font-size:21px;cursor:pointer}
+.bubble-actions button{display:inline-flex;align-items:center;justify-content:center;flex:0 0 32px;padding:0;border:0;background:transparent;color:#7c8ca4;width:32px;height:32px;border-radius:8px;line-height:0;cursor:pointer}
+.bubble-actions button svg{display:block;flex:none;width:18px;height:18px}
 .bubble-actions button:hover{background:#e8eef7;color:#3568ed}
 .bubble-actions button:disabled{opacity:.35;cursor:default}
 .composer{position:relative}

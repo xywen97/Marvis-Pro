@@ -35,9 +35,9 @@ function bubbleActions(body,nodeId,text){
  if(!actions){
   actions=el('div','bubble-actions');body.append(actions);
   const copy=btn('',()=>copyBubble(actions.value.text||''));copy.title='复制文本';copy.setAttribute('aria-label','复制文本');
-  copy.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="8" y="3" width="13" height="13" rx="3"/><rect x="3" y="8" width="13" height="13" rx="3"/></svg>';
+  copy.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/></svg>';
   const branch=btn('',async()=>{if(branch.disabled)return;branch.disabled=true;try{const fork=await api('session-fork',{session_id:session,node_id:actions.value.nodeId});session=fork.session_id;showArchived=false;$('#prompt').value='';showPage('chat');await refresh();await renderMessages();$('#prompt').focus();toast('已分支到新聊天');}finally{branch.disabled=false;}});
-  branch.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h6a5 5 0 0 1 5 5v9M10 14l5 5 5-5M14 5h6v6M20 5l-7 7"/></svg>';
+  branch.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6M9 18h1a8 8 0 0 0 8-8V9"/></svg>';
   branch.title='分支到新聊天';branch.setAttribute('aria-label','分支到新聊天');actions.append(copy,branch);
  }
  actions.value={nodeId,text};actions.lastElementChild.disabled=!nodeId||state?.tasks.some(t=>t.session_id===session&&busy(t));
