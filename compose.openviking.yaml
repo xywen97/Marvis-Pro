@@ -1,0 +1,21 @@
+services:
+  openviking:
+    image: ${OPENVIKING_IMAGE:-ghcr.io/volcengine/openviking:v0.5.0}
+    ports:
+      - "127.0.0.1:1933:1933"
+    volumes:
+      - ./.marvis/openviking:/app/.openviking
+      - ./deploy/openviking/ov.conf:/app/.openviking/ov.conf:ro
+    environment:
+      OPENVIKING_WITH_BOT: "0"
+      OPENVIKING_ROOT_API_KEY: ${OPENVIKING_API_KEY:?Set OPENVIKING_API_KEY in .env}
+      OPENVIKING_VLM_BASE_URL: ${OPENVIKING_VLM_BASE_URL:?Set OPENVIKING_VLM_BASE_URL in .env}
+      OPENVIKING_VLM_MODEL: ${OPENVIKING_VLM_MODEL:?Set OPENVIKING_VLM_MODEL in .env}
+      OPENVIKING_VLM_API_KEY: ${OPENVIKING_VLM_API_KEY:?Set OPENVIKING_VLM_API_KEY in .env}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "openviking-entrypoint", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

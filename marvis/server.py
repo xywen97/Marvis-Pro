@@ -88,6 +88,7 @@ def serve(runtime, port=0, file_picker=None):
                 if not isinstance(data, dict): raise ValueError('请求必须是 JSON 对象。')
                 path = urlparse(self.path).path
                 if path == '/api/pick-files': value = file_picker()
+                elif path == '/api/engine-client': value = runtime.client_lease(data)
                 elif path == '/api/sessions': value = {'id': runtime.new_session(data.get('session_id'))}
                 elif path == '/api/session-action': value = runtime.session_action(data['session_id'], data['action'])
                 elif path == '/api/tree-navigate': value = runtime.navigate_tree(data['session_id'], data.get('node_id'),data.get('summarize',False),data.get('custom_instructions'))
@@ -95,7 +96,7 @@ def serve(runtime, port=0, file_picker=None):
                 elif path == '/api/session-fork': value = runtime.fork_session(data['session_id'],data['node_id'])
                 elif path == '/api/command':
                     from marvis.app_commands import execute
-                    value = execute(runtime,data.get('text',''),data.get('session_id'))
+                    value = execute(runtime,data.get('text',''),data.get('session_id')) if runtime.owned else runtime.command(data.get('text',''),data.get('session_id'))
                 elif path == '/api/tasks': value = runtime.submit(data.get('prompt', ''), data.get('session_id'), data.get('action'))
                 elif path == '/api/cancel': value = runtime.cancel(data['id'])
                 elif path == '/api/approve': value = runtime.approve(data['id'], data['approved'])

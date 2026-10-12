@@ -31,7 +31,8 @@
 | `/browse` | `/b` | 打开网页（需确认） |
 | `/web-search` | `/ws` | 网络搜索 |
 | `/mode` | `/mode` | 切换模式 |
-| `/model` | `/mdl` | 配置效率模式模型；Key 从 .env 读取 |
+| `/model` | `/mdl` | 配置效率模式的端点与模型名称 |
+| `/key` | `/ky` | 隐藏输入并保存 API Key；Enter 保存，Esc 取消 |
 | `/roots` | `/rt` | 设置授权目录，空格路径请加引号 |
 | `/workflow` | `/wf` | 创建自动化，名称请加引号 |
 | `/workflow-run` | `/wfr` | 立即执行工作流 |

@@ -143,19 +143,20 @@
 .permission-control>summary:hover{background:#eaf0f7}
 .permission-control>summary:focus-visible{outline:2px solid #6d92ff;outline-offset:2px}
 .permission-control>summary[aria-disabled=true]{opacity:.5;cursor:default}
-.permission-symbol{font-size:17px;line-height:1;flex:0 0 20px;text-align:center}
-.permission-menu{position:absolute;bottom:calc(100% + 12px);left:0;width:420px;max-width:calc(100vw - 110px);padding:16px 10px 10px;background:white;border:1px solid #e1e5ea;border-radius:20px;box-shadow:0 12px 36px #202c3d14;z-index:12;max-height:60vh;overflow-y:auto}
-.permission-title{margin:0 12px 12px;font-size:13px;font-weight:500;color:#89909a}
-.permission-menu button{display:flex;align-items:center;gap:12px;width:100%;border:0;border-radius:12px;padding:12px;text-align:left;background:transparent}
+.permission-symbol{display:grid;place-items:center;width:18px;height:20px;font-size:17px;line-height:1;flex:0 0 18px}
+.permission-symbol svg{display:block;width:18px;height:20px}
+.permission-menu{position:absolute;bottom:calc(100% + 12px);left:0;width:340px;max-width:calc(100vw - 110px);padding:12px 8px 8px;background:white;border:1px solid #e1e5ea;border-radius:14px;box-shadow:0 12px 36px #202c3d14;z-index:12;max-height:60vh;overflow-y:auto}
+.permission-title{margin:0 8px 8px;font-size:12px;font-weight:500;color:#89909a}
+.permission-menu button{display:flex;align-items:center;gap:8px;width:100%;border:0;border-radius:8px;padding:9px 8px;text-align:left;background:transparent}
 .permission-menu button:hover,.permission-menu button:focus-visible{background:#f5f7fa}
 .permission-menu button>span:nth-child(2){flex:1;min-width:0}
-.permission-menu strong{display:block;font-size:14px;font-weight:600;margin-bottom:5px}
-.permission-menu small{display:block;font-size:12px;line-height:1.6;color:#9298a1}
+.permission-menu strong{display:block;font-size:13px;font-weight:600;margin-bottom:3px}
+.permission-menu small{display:block;font-size:11px;line-height:1.5;color:#9298a1}
 .permission-check{visibility:hidden;font-size:17px}
 .permission-menu [aria-checked=true] .permission-check{visibility:visible}
 .permission-menu [data-permission=full],.permission-control[data-policy=full]>summary{color:#df702f}
 .permission-menu [data-permission=full] small{color:#c97a4e}
-.permission-note{font-size:10px;line-height:1.7;color:#8b95a3;border-top:1px solid var(--line);padding:10px 12px 0;margin:8px 0 0}
+.permission-note{font-size:10px;line-height:1.7;color:#8b95a3;border-top:1px solid var(--line);padding:8px 8px 0;margin:6px 0 0}
 @media(max-width:650px){
  .composer-bottom{gap:6px;flex-wrap:wrap}
  .composer-bottom>#model-label{display:none}

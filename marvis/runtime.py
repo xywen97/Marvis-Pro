@@ -13,6 +13,7 @@ from marvis.capabilities import Capabilities, TOOLS, MUTATIONS, validate_argumen
 from marvis.team import AGENTS, TOOL_AGENTS, tool_message
 from marvis.evaluation import EVALUATION_INTAKE, is_evaluation_wakeup
 from marvis.context_manager import ContextManager, ContextPolicy, estimate_tokens
+from marvis.memory import MemoryEngine
 
 
 class Cancelled(Exception): pass
@@ -39,17 +40,23 @@ class Runtime:
         self.closed = threading.Event()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='marvis-task')
         self.cancels = {}; self.approvals = {}
+        self.client_leases = None
+        self.memory = MemoryEngine(self)
         self.scheduler = threading.Thread(target=self._schedule, daemon=True)
         self.scheduler.start()
 
     def settings(self):
         base = self.base_model
         saved = self.store.setting('model', {})
-        return {'mode': self.store.setting('mode', 'efficiency'), 'approval_policy': self.store.setting('approval_policy', 'auto'), 'roots': self.store.setting('roots', [str(Path.cwd())]),
+        from marvis.paths import bundled
+        return {'mode': self.store.setting('mode', 'efficiency'), 'approval_policy': self.store.setting('approval_policy', 'auto'), 'roots': self.store.setting('roots', [str(Path.home() if bundled() else Path.cwd())]),
                 'model': {'base_url': saved.get('base_url', base.base_url), 'model': saved.get('model', base.model),
                           'configured': bool((saved.get('base_url', base.base_url)) and saved.get('model', base.model)),
                           'has_key': bool(base.api_key)}, 'offline': self.offline,
                 'data_dir': str(self.store.directory)}
+
+    def client_lease(self, data):
+        return self.client_leases.update(data.get('id'), data.get('release', False)) if self.client_leases else {'managed': False}
 
     def update_settings(self, values):
         with self.lock:
@@ -81,10 +88,32 @@ class Runtime:
             url = str(model.get('base_url', '')).strip().rstrip('/')
             parsed = urllib.parse.urlparse(url)
             if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password: raise ValueError('模型端点必须是 HTTP(S) 地址。')
+            if 'api_key' in model:
+                key = model['api_key']
+                if not isinstance(key, str) or any(c in key for c in '\n\r\x00\''):
+                    raise ValueError('模型 API Key 格式无效。')
+                if key.strip():
+                    self._save_model_key(key.strip())
             self.store.set_setting('model', {'base_url': url, 'model': str(model.get('model', '')).strip()})
         if 'approval_policy' in values:
             self.store.set_setting('approval_policy', values['approval_policy'])
+        if 'model' in values or 'mode' in values: self.memory.reconfigure()
         return self.settings()
+
+    def _save_model_key(self, key):
+        """Keep credentials out of SQLite, responses and the shipped bundle."""
+        import os
+        from marvis.paths import env_path
+        target = Path((self.config.get('llm') or {}).get('env_file') or env_path()).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        lines = target.read_text().splitlines() if target.exists() else []
+        lines = [line for line in lines if line.partition('=')[0].strip() != 'OPENAI_API_KEY']
+        lines.append("OPENAI_API_KEY='" + key + "'")
+        temporary = target.with_name(target.name + '.tmp')
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as file: file.write('\n'.join(lines) + '\n')
+        temporary.replace(target)
+        self.base_model.api_key = key
 
     def model(self, settings):
         c = dict(self.config.get('llm') or {})
@@ -118,7 +147,7 @@ class Runtime:
 
     def session_action(self, session_id, action):
         if action not in ('archive', 'restore', 'delete'): raise ValueError('不支持的会话操作。')
-        with self.lock, self.store.lock:
+        with self.lock, self.memory.delivery_lock, self.store.lock:
             if not self.store.one('SELECT id FROM sessions WHERE id=?', (session_id,)): raise ValueError('会话不存在。')
             tasks = self.store.rows('SELECT id,status FROM tasks WHERE session_id=?', (session_id,))
             if any(t['status'] in ('queued','running','waiting_approval') or t['id'] in self.cancels for t in tasks):
@@ -126,6 +155,7 @@ class Runtime:
             # One transaction removes the entire tree and its execution history.
             with self.store.db:
                 if action == 'delete':
+                    self.store.db.execute('DELETE FROM memory_outbox WHERE session_id=?', (session_id,))
                     self.store.db.execute('DELETE FROM context_samples WHERE session_id=?', (session_id,))
                     self.store.db.execute('DELETE FROM events WHERE task_id IN (SELECT id FROM tasks WHERE session_id=?)', (session_id,))
                     self.store.db.execute('UPDATE workflows SET last_task=NULL WHERE last_task IN (SELECT id FROM tasks WHERE session_id=?)', (session_id,))
@@ -326,6 +356,7 @@ class Runtime:
         policy = ContextPolicy.load(self.config, model)
         return {'settings': settings, 'sessions': self.sessions(), 'archived_sessions': self.sessions(True), 'tasks': tasks, 'agents': AGENTS,
                 'context_usage': self.store.context_samples(),
+                'memory': self.memory.status(),
                 'context_policy': {'model': model, 'window_tokens': policy.window_tokens, 'trigger_tokens': policy.trigger},
                 'workflows': self.store.rows('SELECT * FROM workflows ORDER BY next_run'),
                 'knowledge_count': self.store.one('SELECT count(*) AS n FROM documents')['n']}
@@ -491,6 +522,8 @@ class Runtime:
             self.store.add_message(session_id, 'assistant', reply, ident)
             status = evaluation_status or 'completed'
             self.status(ident, status, reply); self.store.event(ident, status, {'text': '评测不可用' if status == 'failed' else '任务完成'})
+            if not direct and status == 'completed' and not is_evaluation_wakeup(prompt):
+                self.memory.enqueue(ident, session_id, settings)
         except Cancelled as e:
             self._preserve_partial_reply(ident)
             self.status(ident, 'cancelled', str(e)); self.store.add_message(session_id, 'assistant', str(e), ident)
@@ -711,6 +744,7 @@ class Runtime:
             for p in self.approvals.values(): p['event'].set()
         self.scheduler.join(timeout=2)
         self.pool.shutdown(wait=True)
+        self.memory.close()
         self.store.close()
         import os
         endpoint = self.store.directory / 'endpoint.json'

@@ -266,7 +266,9 @@ class Coordinator:
         client = self.runtime.model(self.settings)
         tools = [t for t in self.available if TOOL_AGENTS[t['function']['name']] == 'main'] + [DISPATCH_TOOL]
         system = build_system_prompt(self.settings, self.runtime.config.get('persona') or {}, tools)
-        messages = [{'role': 'system', 'content': system}] + self.runtime.context_messages(self.session_id, self.ident)
+        task = self.runtime.store.one('SELECT prompt FROM tasks WHERE id=?', (self.ident,))
+        memory = self.runtime.memory.recall(self.ident, task['prompt'], self.settings)
+        messages = [{'role': 'system', 'content': system}] + memory + self.runtime.context_messages(self.session_id, self.ident)
         self.remember_ids(messages)
         while True:
             self.runtime._check(self.ident)

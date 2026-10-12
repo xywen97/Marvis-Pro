@@ -67,7 +67,7 @@ async function watchLive() {
 window.addEventListener('pagehide',()=>liveAbort?.abort());
 function renderState() {
  if(page==='office')MarvisOffice.render(state);
- $('#knowledge-badge').textContent=state.knowledge_count;$('#mode-toggle').textContent=state.settings.mode==='local'?'◉ 本地模式':'◉ 效率模式';$('#model-label').textContent=state.settings.offline?'离线工具模式':state.settings.mode==='local'?'Ollama · qwen3:latest':state.settings.model.model||'模型未配置';
+ renderMemoryStatus();$('#knowledge-badge').textContent=state.knowledge_count;$('#mode-toggle').textContent=state.settings.mode==='local'?'◉ 本地模式':'◉ 效率模式';$('#model-label').textContent=state.settings.offline?'离线工具模式':state.settings.mode==='local'?'Ollama · qwen3:latest':state.settings.model.model||'模型未配置';
  if(!$('#index-path').value)$('#index-path').value=state.settings.roots[0];
  renderSessionList();
  updateComposer();
@@ -86,6 +86,8 @@ function renderPermissions(){
  const policy=state.settings.approval_policy||'auto',pending=state.tasks.some(busy);
  $('#permission-label').textContent=permissionLabels[policy];
  $('#permission-control').dataset.policy=policy;
+ const symbol=$(`[data-permission="${policy}"] .permission-symbol`);
+ $('#permission-toggle .permission-symbol').replaceChildren(...[...symbol.childNodes].map(node=>node.cloneNode(true)));
  $('#permission-toggle').setAttribute('aria-disabled',String(pending));
  $('#permission-toggle').title=pending?'任务完成或取消后可修改审批模式':'选择审批模式';
  document.querySelectorAll('[data-permission]').forEach(button=>{
@@ -175,6 +177,7 @@ function renderTasks() { const box=$('#task-list');box.replaceChildren();if(!sta
 function renderWorkflows(){const box=$('#workflow-list');box.replaceChildren();if(!state.workflows.length){box.append(el('div','empty','选择模板，或创建你的第一个自动化工作流。'));return;}for(const w of state.workflows){const row=el('div','workflow-row');row.append(el('h3','',w.name),el('p','hint',w.prompt));row.append(el('p','hint',w.enabled?`每 ${w.interval/60} 分钟 · 下次执行 ${new Date(w.next_run*1000).toLocaleString()}`:'已暂停'));const controls=el('div','task-actions');controls.append(btn('立即运行',async()=>{const t=await api('workflow-action',{id:w.id,action:'run'});session=t.session_id;showPage('chat');await renderMessages();await refresh();}),btn(w.enabled?'暂停':'恢复',async()=>{await api('workflow-action',{id:w.id,action:'toggle'});await refresh();}),btn('删除',async()=>{await api('workflow-action',{id:w.id,action:'delete'});await refresh();}));row.append(controls);box.append(row);} }
 let knowledgeTimer;
 async function loadKnowledge(){const result=await api('knowledge?q='+encodeURIComponent($('#knowledge-query').value));const filter=$('#knowledge-filter').value;const files=result.files.filter(f=>!filter||f.category===filter);const box=$('#knowledge-list');box.replaceChildren();if(!files.length){box.append(el('div','empty','这里还没有匹配的文件。\n添加目录并建立索引，或换一个搜索关键词。'));return;}for(const f of files){const row=el('div','file-row');row.append(el('span','file-icon',f.category==='图片'?'▧':'▤'));const info=el('div','file-info');info.append(el('strong','',f.name),el('small','',f.path),el('small','',`${f.category} · ${(f.size/1024).toFixed(1)} KB · ${new Date(f.modified*1000).toLocaleDateString()}`));row.append(info);if(f.category!=='图片')row.append(btn('读取',()=>submit('读取 '+f.name,{tool:'file_read',arguments:{path:f.path}})));else row.append(btn('OCR',()=>submit('识别图片文字 '+f.name,{tool:'image_ocr',arguments:{path:f.path}})));box.append(row);} }
+function renderMemoryStatus(){const node=$('#memory-status');if(!node)return;const memory=state.memory,service=memory?.service;const names={starting:'记忆服务正在启动',restarting:'记忆服务正在恢复',ready:'记忆服务已就绪',failed:'记忆服务暂不可用',stopped:'记忆服务已停止',disabled:'长期记忆已停用',external:'已配置外部记忆服务'};node.textContent=names[service?.state]||'长期记忆未启用';if(service?.error)node.textContent+='：'+service.error;else if(memory?.last_error)node.textContent+='；'+memory.last_error;}
 function fillSettings(){const f=$('#settings-form');f.elements.mode.value=state.settings.mode;f.elements.base_url.value=state.settings.model.base_url||'http://127.0.0.1:11434/v1';f.elements.model.value=state.settings.model.model||'qwen3:latest';f.elements.roots.value=state.settings.roots.join('\n');}
 function pathDialog(action,title,defaultValue,hint){pathAction=action;$('#path-title').textContent=title;$('#path-hint').textContent=hint||'请输入已授权目录内的完整路径。';$('#path-value').value=defaultValue||state?.settings.roots[0]||'';$('#path-query').value='';$('#path-query').classList.toggle('hidden',action!=='files');$('#path-dialog').showModal();$('#path-value').focus();}
 $('#chat-form').onsubmit=e=>{e.preventDefault();const p=$('#prompt').value.trim();if(!p)return;safe(async()=>{
@@ -202,7 +205,7 @@ $('#attach').onclick=()=>safe(async()=>{
 $('#path-cancel').onclick=()=>$('#path-dialog').close();
 $('#path-form').onsubmit=e=>{e.preventDefault();const path=$('#path-value').value.trim();safe(async()=>{const action=pathAction==='files'?{tool:'file_list',arguments:{path,query:$('#path-query').value,content:true}}:{tool:'file_organize',arguments:{path}};await submit((pathAction==='files'?'搜索文件：':'整理目录：')+path,action);$('#path-dialog').close();});};
 $('#mode-toggle').onclick=()=>safe(async()=>{await api('settings',{mode:state.settings.mode==='local'?'efficiency':'local'});await refresh();toast('运行模式已切换');});
-$('#settings-form').onsubmit=e=>{e.preventDefault();const f=e.target;safe(async()=>{await api('settings',{mode:f.elements.mode.value,model:{base_url:f.elements.base_url.value,model:f.elements.model.value},roots:f.elements.roots.value.split('\n').map(x=>x.trim()).filter(Boolean)});await refresh();toast('设置已保存');});};
+$('#settings-form').onsubmit=e=>{e.preventDefault();const f=e.target;safe(async()=>{await api('settings',{mode:f.elements.mode.value,model:{base_url:f.elements.base_url.value,model:f.elements.model.value,...(f.elements.api_key.value?{api_key:f.elements.api_key.value}:{})},roots:f.elements.roots.value.split('\n').map(x=>x.trim()).filter(Boolean)});f.elements.api_key.value='';await refresh();toast('设置已保存');});};
 $('#index-form').onsubmit=e=>{e.preventDefault();safe(()=>submit('建立知识库索引',{tool:'knowledge_index',arguments:{path:$('#index-path').value}}));};
 $('#knowledge-search').onclick=()=>safe(loadKnowledge);$('#knowledge-query').oninput=()=>{clearTimeout(knowledgeTimer);knowledgeTimer=setTimeout(()=>safe(loadKnowledge),250);};$('#knowledge-filter').onchange=()=>safe(loadKnowledge);
 $('#workflow-form').onsubmit=e=>{e.preventDefault();const f=e.target;safe(async()=>{await api('workflows',{name:f.elements.name.value,prompt:f.elements.prompt.value,interval:Number(f.elements.minutes.value)*60});f.reset();await refresh();toast('工作流已创建');});};

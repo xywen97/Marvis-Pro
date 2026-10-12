@@ -38,7 +38,8 @@ HELP = '''输入自然语言，或使用以下命令：
 /web-search QUERY            网络搜索
 /evaluate [JSON]             唤醒评测助手；提交对象与要求后由主控汇总
 /mode local|efficiency       切换模式
-/model URL MODEL             配置效率模式模型；Key 从 .env 读取
+/model URL MODEL             配置效率模式模型
+/key                         隐藏输入并保存模型 API Key
 /roots PATH [PATH ...]        设置授权目录，空格路径请加引号
 /workflow MINUTES NAME TASK   创建自动化，名称请加引号
 /workflow-run ID              立即执行工作流
@@ -64,7 +65,7 @@ SHORT_COMMANDS = {
     '/duplicates':'dup', '/convert':'cv', '/index':'i', '/search':'s',
     '/ocr':'ocr', '/system':'sys', '/apps':'apps', '/open-app':'oa',
     '/web':'web', '/browse':'b', '/web-search':'ws', '/mode':'mode',
-    '/model':'mdl', '/roots':'rt', '/workflow':'wf', '/workflow-run':'wfr',
+    '/model':'mdl', '/key':'ky', '/roots':'rt', '/workflow':'wf', '/workflow-run':'wfr',
     '/workflow-toggle':'wft', '/workflow-delete':'wfd', '/approve':'a',
     '/reject':'j', '/cancel':'c', '/trace':'tr', '/result':'res',
     '/help':'h', '/quit':'q',
@@ -116,6 +117,7 @@ def wrap(text, columns):
 class Terminal:
     def __init__(self, runtime):
         self.runtime = runtime; self.page = 0; self.input = ''; self.cursor = 0
+        self.key_entry = False
         sessions = runtime.sessions(); self.session = sessions[0]['id'] if sessions else runtime.new_session()
         self.scroll = 0; self.notice = '滚轮 / 触控板查看历史 · 输入 /help 查看全部命令'; self.local_text = ''; self.query = ''; self.show_trace = True
         self.navigator = None
@@ -126,6 +128,7 @@ class Terminal:
         self.completion_key = None; self.completion_index = 0; self.completion_hidden = False
 
     def suggestions(self):
+        if self.key_entry: return []
         key = (self.input, self.cursor)
         if key != self.completion_key:
             self.completion_key = key
@@ -213,6 +216,10 @@ class Terminal:
         elif cmd == '/search': self.query = ' '.join(rest); self.page = 2
         elif cmd == '/mode': self.runtime.update_settings({'mode': rest[0]}); self.notice = '模式已切换'
         elif cmd == '/model': self.runtime.update_settings({'model': {'base_url': rest[0], 'model': rest[1]}}); self.notice = '模型配置已保存'
+        elif cmd == '/key':
+            if rest: raise ValueError('/key 不接受明文参数，请使用隐藏输入。')
+            self.key_entry = True; self.input = ''; self.cursor = 0
+            self.notice = '输入模型 API Key（内容隐藏）· Enter 保存 · Esc 取消'
         elif cmd == '/roots': self.runtime.update_settings({'roots': rest}); self.notice = '授权目录已保存'
         elif cmd == '/workflow':
             self.runtime.add_workflow(rest[1], ' '.join(rest[2:]), int(rest[0]) * 60); self.page = 3
@@ -288,7 +295,11 @@ class Terminal:
             return '本地知识库 · /index 建立索引 · /search 关键词\n\n' + '\n\n'.join(f"{f['category']}  {f['name']}\n{f['path']}\n{f['preview']}" for f in files) if files else '知识库暂无匹配文件。使用 /index "目录" 建立索引。'
         if self.page == 3:
             return '自动化 · 服务运行期间执行\n/workflow 60 "磁盘巡检" 检查磁盘空间\n\n' + '\n\n'.join(f"{'运行' if w['enabled'] else '暂停'}  {w['name']} · 每 {w['interval']//60} 分钟\nID: {w['id']}\n{w['prompt']}" for w in snapshot['workflows'])
-        return '设置 · /mode /model /roots\n\n' + json.dumps(snapshot['settings'], ensure_ascii=False, indent=2) + '\n\n本地模式：Ollama 127.0.0.1:11434 / qwen3:latest\nAPI Key 从 .env 读取，不显示在界面。'
+        service = (snapshot.get('memory') or {}).get('service') or {}
+        names = {'ready': '已就绪', 'starting': '正在启动', 'restarting': '正在恢复', 'failed': '暂不可用', 'stopped': '已停止', 'disabled': '已停用', 'external': '外部服务'}
+        memory = '长期记忆：' + names.get(service.get('state'), '未启用')
+        if service.get('error'): memory += '；' + service['error']
+        return '设置 · /mode /model /key /roots\n\n' + json.dumps(snapshot['settings'], ensure_ascii=False, indent=2) + '\n\n' + memory + '\n本地模式：Ollama 127.0.0.1:11434 / qwen3:latest\n/key 隐藏输入模型密钥，不写入对话记录。'
 
     def select_tree(self, node_id, summarize=False):
         result = self.runtime.navigate_tree(self.session, node_id, summarize=summarize)
@@ -419,10 +430,11 @@ class Terminal:
                 put(top + 1 + offset, 2, label, attr)
         put(h-4,1,'─'*(w-2),curses.color_pair(2));put(h-3,2,'› ',curses.color_pair(1))
         # Keep the insertion cursor visible even for long Chinese input.
+        display = '*' * len(self.input) if self.key_entry else self.input
         left=0
-        while width(self.input[left:self.cursor])>w-8:left+=1
-        put(h-3,4,self.input[left:]);put(h-1,2,'工具结果：↑↓选择 · Enter切换 · ←折叠 · →展开 · Esc返回' if self.result_focus else self.notice,curses.color_pair(2))
-        try:screen.move(h-3,4+width(self.input[left:self.cursor]))
+        while width(display[left:self.cursor])>w-8:left+=1
+        put(h-3,4,display[left:]);put(h-1,2,'工具结果：↑↓选择 · Enter切换 · ←折叠 · →展开 · Esc返回' if self.result_focus else self.notice,curses.color_pair(2))
+        try:screen.move(h-3,4+width(display[left:self.cursor]))
         except curses.error:pass
         screen.noutrefresh();curses.doupdate()
 
@@ -468,6 +480,8 @@ class Terminal:
             try:k=screen.get_wch()
             except curses.error:continue
             try:
+                if self.key_entry:
+                    self.key_input(k); continue
                 if k==curses.KEY_MOUSE:
                     self.mouse_event(); continue
                 if self.navigator is not None:
@@ -506,6 +520,22 @@ class Terminal:
             except (ValueError,KeyError,IndexError,PermissionError) as e:
                 self.notice = '错误：' + str(e)
                 if self.navigator is not None: self.navigator.error = self.notice
+
+    def key_input(self, key):
+        if key in ('\x1b', '\x03'):
+            self.input = ''; self.cursor = 0; self.key_entry = False; self.notice = '已取消密钥输入'
+        elif key in ('\n', '\r', curses.KEY_ENTER):
+            secret = self.input.strip()
+            self.input = ''; self.cursor = 0; self.key_entry = False
+            if secret:
+                model = self.runtime.settings()['model']
+                self.runtime.update_settings({'model': {'base_url': model['base_url'], 'model': model['model'], 'api_key': secret}})
+                self.state_time = 0; self.notice = '模型密钥已保存'
+        elif key in ('\x7f', '\b', curses.KEY_BACKSPACE):
+            self.input = self.input[:-1]; self.cursor = len(self.input)
+        elif key == '\x15': self.input = ''; self.cursor = 0
+        elif isinstance(key, str) and key.isprintable():
+            self.input += key; self.cursor = len(self.input)
 
 
 def launch(runtime):

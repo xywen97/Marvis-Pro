@@ -100,3 +100,21 @@ evaluation:
   timeout: 120
   # python: /absolute/path/to/python3.12-with-deepeval
   # 默认使用主引擎的当前 Python 解释器，与项目 .venv 保持一致。
+
+# 跨会话长期记忆：SQLite 保留执行树，OpenViking 负责记忆提取与语义检索。
+# App/TUI 自动启动原生服务；external 可连接已有或 Docker 服务。
+memory:
+  enabled: true
+  backend: openviking
+  deployment: managed
+  url: "http://127.0.0.1:1933"
+  auth_mode: trusted             # 本地 compose；托管服务使用 api_key
+  account: marvis
+  user: marvisxy                 # 相同 account/user 共享长期记忆
+  timeout: 3
+  recall_limit: 5
+  recall_chars: 6000
+  retry_seconds: 30
+  managed:
+    startup_timeout: 90
+    max_restarts: 3

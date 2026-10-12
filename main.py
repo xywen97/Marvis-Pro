@@ -8,18 +8,19 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+from marvis.paths import default_directory, default_config, env_path, bundled
 
 
 def load_config(path):
     try:
         import yaml
         with open(path, encoding='utf-8') as f: config = yaml.safe_load(f) or {}
-        config.setdefault('llm', {}).setdefault('env_file', str(ROOT / '.env'))
+        config.setdefault('llm', {}).setdefault('env_file', str(env_path()))
         return config
     except ImportError:
-        return {'llm': {'env_file': str(ROOT / '.env')}}
+        return {'llm': {'env_file': str(env_path())}}
     except FileNotFoundError:
-        return {'llm': {'env_file': str(ROOT / '.env')}}
+        return {'llm': {'env_file': str(env_path())}}
 
 
 def run_once(runtime, text, session_id=None):
@@ -48,13 +49,21 @@ def main():
     modes.add_argument('--serve', action='store_true', help='只启动后台 API 与工作台，输出访问 URL')
     modes.add_argument('--tui', action='store_true', help='启动全屏 TUI（F1–F5 页面）')
     modes.add_argument('--interactive', action='store_true', help='启动逐行交互 CLI')
-    parser.add_argument('--config', default=str(ROOT / 'config.yaml'))
-    parser.add_argument('--data-dir', default=str(ROOT / '.marvis'), help='持久化数据目录')
+    parser.add_argument('--config', default=str(default_config()))
+    parser.add_argument('--data-dir', default=str(default_directory()), help='持久化数据目录')
+    parser.add_argument('--diagnose-bundle', action='store_true', help='检查独立运行组件，不启动服务')
+    parser.add_argument('--engine', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--port', type=int, default=0, help='服务端口，默认自动分配')
     parser.add_argument('--offline', action='store_true', help='禁用模型调用；网络工具仍由运行模式控制')
     parser.add_argument('--routes', action='store_true', help='查看工具与旧版路由规则')
     parser.add_argument('text', nargs='*', help='单轮自然语言或 /tool TOOL JSON 指令')
     args = parser.parse_args(); config = load_config(args.config)
+    if args.diagnose_bundle:
+        import importlib.util
+        checks = {name: importlib.util.find_spec(name) is not None for name in ('webview', 'openviking_cli', 'llama_cpp', 'yaml')}
+        checks['embedding_model'] = (ROOT / 'models' / 'bge-small-zh-v1.5-f16.gguf').is_file()
+        print(json.dumps({'bundled': bundled(), 'python': sys.executable, 'checks': checks}, ensure_ascii=False))
+        return 0 if all(checks.values()) else 1
     if args.routes:
         from agent import MainAgent
         from marvis.capabilities import TOOLS
@@ -66,6 +75,13 @@ def main():
     from marvis.runtime import Runtime
     from marvis.server import serve
     runtime = connect(args.data_dir)
+    if bundled() and not args.engine and not args.serve and runtime is None:
+        from marvis.engine_process import start_engine
+        try: runtime = start_engine(args.data_dir, args.config, args.offline)
+        except RuntimeError as error:
+            print(str(error), file=sys.stderr); return 1
+    if args.engine and runtime:
+        return 0
     if runtime and args.offline and not runtime.settings()['offline']:
         print('已有引擎正在运行且启用了模型。请先退出该引擎，再以 --offline 启动。', file=sys.stderr);return 1
     try:
@@ -75,10 +91,15 @@ def main():
         return 1
     server = None
     try:
-        if args.app:
+        if args.engine:
+            from marvis.engine_process import run_engine
+            run_engine(runtime)
+        elif args.app:
+            if not runtime.owned: runtime.attach()
             from marvis.desktop import launch
             launch(runtime)
         else:
+            if not runtime.owned: runtime.attach()
             # Every primary UI exposes the same engine so other clients can attach.
             if runtime.owned or args.web or args.serve:
                 server, url = serve(runtime, args.port)

@@ -4,6 +4,8 @@ macOS 个人 AI 工作台与全屏交互式终端。桌面 App、浏览器工作
 
 当前版本 **0.2.0** 是可运行的功能实现。具体支持范围与缺口见 [功能对照](docs/FEATURES.md)。
 
+跨会话持久化记忆已接入 OpenViking：后台提取成功对话的长期记忆，主控在后续任务检索相关偏好与经验。App/TUI 自动管理原生记忆服务，独立发布包携带 Python、OpenViking 和嵌入模型；构建、配置和同步状态说明见 [OpenViking 记忆后台](docs/OPENVIKING_MEMORY.md)。
+
 ## 截图展示
 
 ### 动画办公室
@@ -68,9 +70,17 @@ python3.12 -m venv .venv
 
 不安装桌面和文档依赖时，TUI、CLI、HTTP 服务、文本搜索、CSV 转换和 SQLite 知识库仍可运行。PyYAML 用于读取集中配置，缺失时使用 `.env` 模型配置。
 
-App 启动后，再启动 TUI 会自动复用同一后台引擎；TUI 关闭不影响 App。所有客户端必须使用相同 `--data-dir`。**启动后台引擎的进程退出时**任务和定时器停止，其余客户端会失去连接。若需要持续运行，可保持 `--serve` 在终端运行。暂未安装 launchd 常驻服务。
+App 与 TUI 使用相同 `--data-dir` 时复用同一引擎。独立发布包自动启动后台引擎，客户端关闭只断开连接；全部客户端退出、无运行任务和启用工作流时，引擎空闲约 10 秒后停止。源码开发入口由首个启动进程拥有引擎，该进程退出会停止服务。
 
-### 双击 App
+### 独立 App 与 TUI
+
+```bash
+.venv/bin/python scripts/build_native_app.py
+```
+
+生成 `dist/native/MarvisXY.app` 与终端入口 `dist/native/marvis`，可脱离项目和 `.venv` 运行。记忆服务自动启动，数据保存在 `~/Library/Application Support/MarvisXY/`。构建依赖与验证见 [原生记忆和打包说明](docs/OPENVIKING_MEMORY.md)。当前包尚未进行 Developer ID 签名和公证。
+
+### 双击开发 App
 
 ```bash
 .venv/bin/python scripts/build_local_app.py
@@ -149,7 +159,7 @@ App 输入框也支持相同的斜杠命令与短命令，例如 `/help`（`/h`�
 
 App 图片支持 Markdown `![说明](https://example.com/image.png)`、PNG/JPEG/GIF/WebP 的 base64 data URL，以及 `![说明](/已授权目录/图片.png)`（相对路径按项目工作目录解析）。本地图片经认证接口读取，沿用目录授权与凭据排除规则，上限 10 MB；本地模式不加载远程图片。渲染库随项目打包，界面不依赖 CDN。Markdown 内的 HTML 经清洗后显示。
 
-沿用 `config.yaml` 的模型与人设配置。密钥只放 `.env`，不会显示在 UI 或存入设置数据库。
+沿用 `config.yaml` 的模型与人设配置。密钥可在 App 设置或 TUI `/key` 隐藏输入，保存在私有 `.env`，不会回显或存入设置数据库。
 
 ```dotenv
 OPENAI_BASE_URL=https://your-provider.example/v1

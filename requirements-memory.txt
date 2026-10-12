@@ -1,0 +1,4 @@
+# Fixed native service version bundled with both App and TUI.
+openviking==0.5.0
+# OpenViking's local GGUF embedding runtime (compiled only on the build machine).
+llama-cpp-python==0.3.36

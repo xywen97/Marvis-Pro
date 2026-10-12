@@ -20,6 +20,9 @@ def execute(runtime, text, session_id):
     if session_id: ui.session = session_id
     if name == '/evaluate' and len(args) == 1:
         return {'session_id': ui.session, 'view': 'evaluation', 'arguments': []}
+    if name == '/key':
+        if len(args) != 1: raise ValueError('/key 不接受明文参数，请在设置中填写密钥。')
+        return {'session_id': ui.session, 'page': 4, 'text': '', 'query': '', 'notice': '请在设置中填写 API Key'}
     if name in ('/tree','/trace','/result','/quit'):
         return {'session_id':ui.session,'view':name[1:],'arguments':args[1:]}
     ui.command(text)
