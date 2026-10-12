@@ -13,7 +13,10 @@ from marvis.capabilities import Capabilities
 STATIC = Path(__file__).resolve().parent.parent / 'ui'
 
 
-def serve(runtime, port=0):
+def serve(runtime, port=0, file_picker=None):
+    if file_picker is None:
+        from marvis.file_picker import FilePicker
+        file_picker = FilePicker(runtime).choose
     token = secrets.token_urlsafe(32)
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_): pass
@@ -84,7 +87,8 @@ def serve(runtime, port=0):
                 data = json.loads(self.rfile.read(size))
                 if not isinstance(data, dict): raise ValueError('请求必须是 JSON 对象。')
                 path = urlparse(self.path).path
-                if path == '/api/sessions': value = {'id': runtime.new_session(data.get('session_id'))}
+                if path == '/api/pick-files': value = file_picker()
+                elif path == '/api/sessions': value = {'id': runtime.new_session(data.get('session_id'))}
                 elif path == '/api/session-action': value = runtime.session_action(data['session_id'], data['action'])
                 elif path == '/api/tree-navigate': value = runtime.navigate_tree(data['session_id'], data.get('node_id'),data.get('summarize',False),data.get('custom_instructions'))
                 elif path == '/api/tree-label': value = runtime.label_node(data['session_id'], data['node_id'], data.get('label', ''))

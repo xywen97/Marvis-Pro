@@ -11,6 +11,16 @@ async function run(){
   browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE||undefined});
   const context=await browser.newContext({viewport:{width:1480,height:1000},permissions:['clipboard-read','clipboard-write']});const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(data.url);await page.waitForFunction(()=>liveConnected&&appCommands.length>0);
+  let selectedFiles=['/授权目录/带 空格.txt','/授权目录/second.md'];let pickerFailed=false;
+  await page.route('**/api/pick-files',route=>route.fulfill({status:pickerFailed?400:200,contentType:'application/json',body:JSON.stringify(pickerFailed?{error:'所选文件不在授权目录内'}:{paths:selectedFiles})}));
+  await page.locator('#prompt').fill('请读取');await page.locator('#attach').click();
+  await page.waitForFunction(()=>document.querySelector('#prompt').value.includes('second.md'));
+  assert.equal(await page.locator('#prompt').inputValue(),'请读取 "/授权目录/带 空格.txt" "/授权目录/second.md"');
+  assert.equal(await page.locator('#path-dialog[open]').count(),0);
+  selectedFiles=[];await page.locator('#attach').click();await page.waitForFunction(()=>!document.querySelector('#attach').disabled);
+  assert.equal(await page.locator('#prompt').inputValue(),'请读取 "/授权目录/带 空格.txt" "/授权目录/second.md"');
+  pickerFailed=true;await page.locator('#attach').click();await page.waitForFunction(()=>document.querySelector('#toast').textContent.includes('授权目录'));
+  assert(await page.locator('#attach').isEnabled());await page.locator('#prompt').fill('');
   await page.locator('#prompt').fill('/t');assert(await page.locator('#command-menu').isVisible());assert((await page.locator('#command-menu').textContent()).includes('/tree (t)'));
   await page.locator('#prompt').press('Tab');assert.equal(await page.locator('#prompt').inputValue(),'/tree ');
   await page.locator('#prompt').press('Enter');await page.waitForSelector('#tree-dialog[open]');assert(await page.locator('#tree-dialog').isVisible());await page.locator('#tree-dialog').getByRole('button',{name:'关闭',exact:true}).click();

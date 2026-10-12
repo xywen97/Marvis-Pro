@@ -144,9 +144,18 @@ $('#new-chat').onclick=()=>safe(async()=>{
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>safe(()=>submit(b.dataset.prompt)));
 document.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>{const a=b.dataset.quick;if(a==='system')safe(()=>submit('检查电脑状态',{tool:'system_info',arguments:{}}));else if(a==='workflow')showPage('workflows');else pathDialog(a,a==='files'?'查找本地文件':'整理目录',state?.settings.roots[0]);});
-$('#attach').onclick=()=>pathDialog('attach','添加文件路径','');
+$('#attach').onclick=()=>safe(async()=>{
+ const button=$('#attach');if(button.disabled)return;button.disabled=true;
+ try{
+  const result=await api('pick-files',{});
+  if(!result.paths?.length)return;
+  const prompt=$('#prompt');const paths=result.paths.map(path=>JSON.stringify(path)).join(' ');
+  prompt.value+=(prompt.value&&!/\s$/.test(prompt.value)?' ':'')+paths;
+  updateCommandMenu();prompt.focus();toast(`已添加 ${result.paths.length} 个文件`);
+ }finally{button.disabled=false;}
+});
 $('#path-cancel').onclick=()=>$('#path-dialog').close();
-$('#path-form').onsubmit=e=>{e.preventDefault();const path=$('#path-value').value.trim();if(pathAction==='attach'){$('#prompt').value+=' "'+path+'"';$('#path-dialog').close();return;}safe(async()=>{const action=pathAction==='files'?{tool:'file_list',arguments:{path,query:$('#path-query').value,content:true}}:{tool:'file_organize',arguments:{path}};await submit((pathAction==='files'?'搜索文件：':'整理目录：')+path,action);$('#path-dialog').close();});};
+$('#path-form').onsubmit=e=>{e.preventDefault();const path=$('#path-value').value.trim();safe(async()=>{const action=pathAction==='files'?{tool:'file_list',arguments:{path,query:$('#path-query').value,content:true}}:{tool:'file_organize',arguments:{path}};await submit((pathAction==='files'?'搜索文件：':'整理目录：')+path,action);$('#path-dialog').close();});};
 $('#mode-toggle').onclick=()=>safe(async()=>{await api('settings',{mode:state.settings.mode==='local'?'efficiency':'local'});await refresh();toast('运行模式已切换');});
 $('#settings-form').onsubmit=e=>{e.preventDefault();const f=e.target;safe(async()=>{await api('settings',{mode:f.elements.mode.value,model:{base_url:f.elements.base_url.value,model:f.elements.model.value},roots:f.elements.roots.value.split('\n').map(x=>x.trim()).filter(Boolean)});await refresh();toast('设置已保存');});};
 $('#index-form').onsubmit=e=>{e.preventDefault();safe(()=>submit('建立知识库索引',{tool:'knowledge_index',arguments:{path:$('#index-path').value}}));};
