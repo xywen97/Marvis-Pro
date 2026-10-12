@@ -73,7 +73,7 @@ class AgentContractsTests(unittest.TestCase):
                     self.assertTrue(definition['description'])
                     if 'default' in definition:
                         # Validate each advertised default alongside required inputs.
-                        args = {key: 'fixture' for key in fn['parameters']['required']}
+                        args = {key: ('0' * 64 if key == 'expected_sha256' else 'fixture') for key in fn['parameters']['required']}
                         args[name] = definition['default']
                         validate_arguments(fn['name'], args)
         p = self.work/'note.txt'; p.write_text('a'*100001)
