@@ -8,7 +8,7 @@ from marvis.app_commands import catalog, execute
 class AppCommandsTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
-        self.runtime = Runtime(self.directory.name, offline=True)
+        self.runtime = Runtime(self.directory.name, offline=True, config={'evaluation': {'enabled': False}})
         self.sid = self.runtime.new_session()
 
     def tearDown(self):

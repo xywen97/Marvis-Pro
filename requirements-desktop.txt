@@ -1,8 +1,8 @@
 # macOS WKWebView native desktop host
 pywebview>=5.3,<7
-PyYAML>=6,<7
+-r requirements.txt
 
-# Python 3.9-compatible macOS binary wheels (PyObjC 12 no longer supports 3.9).
+# Keep the tested PyObjC 11 series on Python 3.12.
 pyobjc-core>=9,<12; sys_platform == "darwin"
 pyobjc-framework-Cocoa>=9,<12; sys_platform == "darwin"
 pyobjc-framework-Quartz>=9,<12; sys_platform == "darwin"

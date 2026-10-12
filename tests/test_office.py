@@ -14,7 +14,7 @@ class OfficeTests(unittest.TestCase):
         from pypdf import PdfWriter
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder); work=root/'work';work.mkdir()
-            runtime=Runtime(root/'data',offline=True)
+            runtime=Runtime(root/'data',offline=True, config={'evaluation': {'enabled': False}})
             try:
                 runtime.update_settings({'roots':[str(work)]});caps=Capabilities(runtime.store)
                 doc=Document();doc.add_paragraph('本地 Word 文档测试');table=doc.add_table(rows=1,cols=2);table.cell(0,0).text='客户';table.cell(0,1).text='上海';doc.save(work/'sample.docx')

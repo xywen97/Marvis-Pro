@@ -9,7 +9,7 @@ from marvis.server import serve
 class ClientTests(unittest.TestCase):
     def test_remote_tree_navigation_and_bookmark(self):
         with tempfile.TemporaryDirectory() as directory:
-            runtime=Runtime(directory,offline=True);server,_=serve(runtime)
+            runtime=Runtime(directory,offline=True, config={'evaluation': {'enabled': False}});server,_=serve(runtime)
             try:
                 client=connect(directory);sid=client.new_session()
                 task=client.submit('你好',sid)
@@ -27,14 +27,14 @@ class ClientTests(unittest.TestCase):
 
     def test_second_client_shares_engine_and_confirmation(self):
         with tempfile.TemporaryDirectory() as directory:
-            runtime=Runtime(directory,offline=True);server,_=serve(runtime)
+            runtime=Runtime(directory,offline=True, config={'evaluation': {'enabled': False}});server,_=serve(runtime)
             try:
                 client=connect(directory);self.assertIsNotNone(client)
                 self.assertEqual(client.settings()['offline'],True)
                 sid=client.new_session();task=client.submit('检查磁盘空间',sid)
                 self.assertEqual(task['session_id'],sid)
                 self.assertTrue(any(s['id']==sid for s in runtime.sessions()))
-                with self.assertRaises(RuntimeError):Runtime(directory,offline=True)
+                with self.assertRaises(RuntimeError):Runtime(directory,offline=True, config={'evaluation': {'enabled': False}})
                 client.close()
                 self.assertEqual(runtime.closed.is_set(),False)
             finally:server.shutdown();server.server_close();runtime.close()

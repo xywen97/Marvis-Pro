@@ -6,7 +6,8 @@ from marvis.agent_protocol import DISPATCH_TOOL, REPORT_TOOL, REQUEST_SCHEMA, RE
 from marvis.capabilities import TOOLS
 from marvis.prompts import build_system_prompt, build_worker_prompt
 from marvis.store import uid
-from marvis.team import TOOL_AGENTS, AGENT_STRATEGIES, tool_message
+from marvis.team import TOOL_AGENTS, AGENT_STRATEGIES, agent_tool_names, tool_message
+from marvis.evaluation import enabled, measure, digest, evidence_snapshot
 
 
 class Coordinator:
@@ -20,18 +21,19 @@ class Coordinator:
         self.tool_limit = self.limit('max_tool_calls', 128, 256)
         self.model_calls = 0; self.tool_calls = 0; self.dispatches = 0
         self.signatures = {}; self.failures = {}; self.call_ids = set(); self.completed_requests = set(); self.results = []
-        self.available = [t for t in TOOLS if not (settings['mode'] == 'local' and t['function']['name'] in ('browser_read', 'browser_open', 'web_search'))]
+        self.evaluation_receipts = []; self.repairs = 0
+        self.available = [t for t in TOOLS if not (settings['mode'] == 'local' and t['function']['name'] in ('browser_read', 'browser_open', 'web_search', 'code_execute'))]
 
     def limit(self, key, default, maximum):
         return max(1, min(maximum, int(self.options.get(key, default))))
 
-    def turn(self, client, messages, tools, actor, request_id=None, final=False):
+    def turn(self, client, messages, tools, actor, request_id=None, final=False, deadline=None):
         self.runtime._check(self.ident)
         if self.model_calls >= self.model_limit: raise ValueError('达到任务共享模型调用上限。')
         self.model_calls += 1
         return self.runtime._model_turn(self.ident, client, messages, self.model_calls,
                                         tool_choice='none' if final else 'auto', tools=tools,
-                                        agent=actor, request_id=request_id)
+                                        agent=actor, request_id=request_id, deadline=deadline)
 
     def normalize(self, result):
         if not result.ok: raise ValueError('模型调用失败：' + result.error)
@@ -56,14 +58,14 @@ class Coordinator:
         if self.tool_calls > self.tool_limit: raise ValueError('达到任务共享工具调用上限。')
         fn = call['function']; name = fn.get('name'); args = json.loads(fn.get('arguments') or '{}')
         # Enforce ownership even if a provider invents an unavailable function.
-        if TOOL_AGENTS.get(name) != actor: raise PermissionError('不能调用其他 Agent 的工具：' + str(name))
+        if name not in agent_tool_names(actor): raise PermissionError('不能调用其他 Agent 的工具：' + str(name))
         if name not in {t['function']['name'] for t in self.available}: raise PermissionError('此运行模式没有提供该工具。')
         signature = json.dumps([name, args], ensure_ascii=False, sort_keys=True)
         if self.failures.get(signature, 0) >= 2: raise ValueError('相同参数已失败两次，停止重复执行；请调整参数或解释失败原因。')
         try:
             out = self.runtime._tool(self.ident, self.caps, name, args, step=self.model_calls,
                                      call_id=call['id'], scope='worker' if actor != 'main' else None,
-                                     request_id=request_id)
+                                     request_id=request_id, actor=actor)
             self.failures.pop(signature, None)
             return out
         except Exception:
@@ -84,7 +86,7 @@ class Coordinator:
         if self.dispatches >= self.dispatch_limit: raise ValueError('达到主控调度上限，停止转接。')
         if request.get('continuation_of') and request['continuation_of'] not in self.completed_requests:
             raise ValueError('continuation_of 必须指向当前任务已返回的请求。')
-        owned = [t for t in self.available if TOOL_AGENTS[t['function']['name']] == actor]
+        owned = [t for t in self.available if t['function']['name'] in agent_tool_names(actor)]
         if not owned: raise ValueError('此模式下目标助手没有可用工具。')
         signature = request_signature(request)
         if self.signatures.get(signature, 0) >= 2: raise ValueError('相同助手任务已调度两次，停止循环转接。')
@@ -92,6 +94,7 @@ class Coordinator:
         self.dispatches += 1
         request_id = uid()
         self.runtime.store.event(self.ident, 'agent_start', {'agent': actor, 'request_id': request_id, 'request': request})
+        if actor == 'evaluation': return self.evaluate_dispatch(request, request_id)
         rounds_config = self.options.get('agent_rounds') or {}
         rounds = max(1, min(16, int(rounds_config.get(actor, AGENT_STRATEGIES[actor]['rounds']))))
         tools = owned + [REPORT_TOOL]
@@ -166,7 +169,57 @@ class Coordinator:
         self.results.append(envelope)
         return envelope
 
+    def evaluate_dispatch(self, request, request_id):
+        # DeepEval controls scoring; this assistant has no writable tools or recursive dispatch.
+        evidence = []
+        self.caps.delivery_evaluator = lambda args: measure(self, args['candidate'], request_id)
+        try:
+            call = {'id': uid(), 'function': {'name': 'delivery_evaluate',
+                                             'arguments': json.dumps({'candidate': request['context']}, ensure_ascii=False)}}
+            result = self.physical_tool('evaluation', call, request_id)
+            evidence.append({'tool': 'delivery_evaluate', 'call_id': call['id'], 'result': result})
+            self.evaluation_receipts.append(result)
+            report = {'status': 'completed', 'summary': json.dumps(result, ensure_ascii=False), 'requests': []}
+        except Exception as error:
+            self.runtime._check(self.ident)
+            report = {'status': 'failed', 'summary': str(error), 'requests': []}
+        finally:
+            self.caps.delivery_evaluator = None
+        envelope = {'version': 1, 'request_id': request_id, 'agent': 'evaluation', **report, 'evidence': evidence}
+        validate(envelope, RESULT_SCHEMA)
+        self.runtime.store.event(self.ident, 'agent_context', {'agent': 'evaluation', 'request_id': request_id,
+                                 'messages': [{'role': 'assistant', 'content': tool_message(envelope)}]})
+        self.runtime.store.event(self.ident, 'agent_result', {'agent': 'evaluation', 'request_id': request_id, 'result': envelope})
+        self.completed_requests.add(request_id); self.results.append(envelope)
+        return envelope
+
+    def gate_candidate(self, candidate):
+        if not enabled(self.runtime):
+            self.runtime.store.event(self.ident, 'evaluation_skipped', {'text': '配置显式关闭交付评测。'})
+            return None
+        fingerprint = digest(candidate)
+        snapshot_digest = digest(evidence_snapshot(self))
+        receipt = next((r for r in reversed(self.evaluation_receipts)
+                        if r['candidate_sha256'] == fingerprint and r['evidence_digest'] == snapshot_digest), None)
+        if receipt is None:
+            report = self.dispatch({'agent': 'evaluation', 'objective': '交付前通过 DeepEval 评估任务、证据和质量。', 'context': candidate})
+            if report['status'] != 'completed': raise ValueError('交付评测不可用，未放行：' + report['summary'])
+            receipt = report['evidence'][0]['result']
+        self.runtime.store.event(self.ident, 'delivery_evaluation', {'agent': 'evaluation', **receipt})
+        if receipt['passed']:
+            if digest(evidence_snapshot(self)) != receipt['evidence_digest']:
+                raise ValueError('交付放行前产物发生变化，需要重新评测。')
+            self.runtime.store.event(self.ident, 'delivery_accepted', {'candidate_sha256': fingerprint,
+                                                                    'evidence_digest': snapshot_digest})
+            return None
+        return receipt
+
+    def blocked(self, report):
+        reasons = '；'.join(m['name'] + '：' + str(m['reason']) for m in report['metrics'] if not m['passed'])
+        raise ValueError('交付评测未通过，未作为合格成果交付。已执行的文件修改不会自动撤销。' + reasons)
+
     def budget_summary(self):
+        if enabled(self.runtime): raise ValueError('共享模型预算耗尽，无法完成交付评测，未放行候选成果。')
         return '已达到任务共享调用上限，停止执行；任务可能尚未全部完成。\n\n' + '\n'.join(
             f"{r['agent']}（{r['status']}）：{r['summary']}" for r in self.results)
 
@@ -174,6 +227,7 @@ class Coordinator:
         client = self.runtime.model(self.settings)
         tools = [t for t in self.available if TOOL_AGENTS[t['function']['name']] == 'main'] + [DISPATCH_TOOL]
         system = build_system_prompt(self.settings, self.runtime.config.get('persona') or {}, tools, self.main_rounds)
+        if not enabled(self.runtime): system += '\n当前配置显式关闭交付评测；不能宣称成果通过 DeepEval。'
         system += f'\n共享预算：调度 {self.dispatch_limit} 次，模型调用 {self.model_limit} 次，实体工具调用 {self.tool_limit} 次。'
         messages = [{'role': 'system', 'content': system}] + self.runtime.context_messages(self.session_id, self.ident)
         self.remember_ids(messages)
@@ -183,7 +237,16 @@ class Coordinator:
             calls = self.normalize(result)
             if not calls:
                 if not result.content.strip(): raise ValueError('模型返回空响应，请重试。')
-                return result.content.strip()
+                candidate = result.content.strip()
+                rejected = self.gate_candidate(candidate)
+                if rejected is None: return candidate
+                repair_limit = max(0, min(3, int((self.runtime.config.get('evaluation') or {}).get('max_repairs', 2))))
+                if self.repairs >= repair_limit: self.blocked(rejected)
+                self.repairs += 1
+                messages.extend([{'role': 'assistant', 'content': candidate}, {'role': 'user', 'content':
+                    '执行器交付评测未通过。依据以下指标反馈修正结果；必要时通过主控调度原助手修复实际文件并重新验证，'
+                    '不能只把失败改写成成功，不能降低阈值或伪造评分。修正后再次提交最终答案：\n' + tool_message(rejected)}])
+                continue
             messages.append({'role': 'assistant', 'content': result.content, 'tool_calls': calls})
             for call in calls:
                 name = call['function'].get('name')
@@ -208,4 +271,7 @@ class Coordinator:
         result = self.turn(client, messages, tools, 'main', final=True)
         self.normalize(result)
         if result.tool_calls: raise ValueError('模型在执行预算用完后仍返回工具调用，未执行这些操作。')
-        return result.content.strip() or '已达到执行步数上限，请查看执行记录。'
+        candidate = result.content.strip() or '已达到执行步数上限，请查看执行记录。'
+        rejected = self.gate_candidate(candidate)
+        if rejected: self.blocked(rejected)
+        return candidate

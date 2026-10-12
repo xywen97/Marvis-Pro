@@ -28,3 +28,7 @@ body.office-view .team-panel{display:none}body.office-view{grid-template-columns
 @media(max-width:650px){body.office-view{grid-template-columns:60px minmax(0,1fr)}.office-layout{padding:20px 12px;gap:20px}.office-floor{padding:15px 7px 12px}.office-stations{gap:5px}.station-label{font-size:10px}.station-status{font-size:8px}.office-insights{display:block}.office-agent-card{margin-bottom:22px}.office-title{align-items:flex-start}.office-title button{padding:5px 7px;font-size:9px}.office-title h2{font-size:20px}.office-title p{font-size:10px}.office-lounge{padding:13px 5px 3px}.office-lounge>span:last-child{display:none}}
 #office:not(.active) *{animation-play-state:paused!important}
 @media(prefers-reduced-motion:reduce){#office *{animation:none!important;transition:none!important}}
+
+.agent-coding .scarf{fill:#79aaa6}
+
+.agent-evaluation .scarf{fill:#a4b878}

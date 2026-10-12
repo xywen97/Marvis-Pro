@@ -20,12 +20,13 @@ from pathlib import Path
 from html.parser import HTMLParser
 from marvis.team import AGENTS, AGENT_STRATEGIES, TOOL_AGENTS
 from marvis.file_tools import FileTools
+from marvis.coding_tools import CodingTools
 
 TEXT = {'.txt', '.md', '.py', '.js', '.ts', '.json', '.csv', '.html', '.css', '.yaml', '.yml', '.toml', '.log', '.rst',
         '.jsx', '.tsx', '.vue', '.svelte', '.sql', '.sh', '.zsh', '.c', '.h', '.cpp', '.hpp', '.go', '.rs',
         '.java', '.ini', '.cfg', '.xml', '.svg', '.tex', '.bib'}
 IMAGES = {'.png', '.jpg', '.jpeg', '.webp', '.heic', '.gif', '.bmp'}
-SKIP = {'.git', '.venv', 'venv', 'node_modules', '__pycache__', '.marvis', '.aws', '.ssh', '.codex', '.agents'}
+SKIP = {'.git', '.venv', '.venv-eval', 'venv', 'node_modules', '__pycache__', '.marvis', '.aws', '.ssh', '.codex', '.agents'}
 
 
 def category(path):
@@ -52,6 +53,15 @@ DIRECTORY = field('string', '目标目录路径；优先使用用户提供或工
 FILE = field('string', '文件路径；优先使用用户提供或工具返回的绝对路径，必须在授权目录内。不是目录。')
 URL = field('string', '完整公开 HTTP(S) URL；不能包含用户名或密码，不能访问本机、私网或非公开地址。')
 TOOLS = [
+    schema('delivery_evaluate', '评测助手专用：使用 DeepEval 原生 G-Eval 对候选交付按任务完成度、证据一致性、交付质量评分。证据与产物从执行器读取，不能由模型伪造；返回分数、阈值、理由及候选/证据指纹。评测不能修改文件；失败或不可用不会放行。通过现有主控协议调用评测助手，context 为完整候选答案。', {
+        'candidate': field('string', '完整待交付答案；产物文件和验证证据由执行器自行收集，不在此提供虚构证据。', minLength=1, maxLength=60000),
+    }, ['candidate']),
+    schema('code_check', '编程助手：无执行地检查 Python 或 JSON 语法，最多 2 MB UTF-8 文本。返回 valid、sha256 和错误行列；语法通过不证明功能正确，不检查其他语言或项目依赖。', {'path': FILE}, ['path']),
+    schema('code_execute', '编程助手：经用户确认，在真实电脑的授权工作目录运行代码任务命令，如测试、构建或 Git 状态检查。argv 数组按字面传入，shell=False，不自动展开管道或变量。没有沙箱；进程继承环境权限，可访问目录外文件和网络。预览展示完整参数与风险。超时或取消终止进程组；输出合并 stdout/stderr 并限长，非零退出返回 error。本地模式禁用。不得绕过文件权限或用户拒绝，不自行提交、推送、发布或启动长期服务。', {
+        'argv': field('array', '可执行程序及其参数，如 ["python3", "-m", "unittest"]; 不填 shell 拼接字符串。', items={'type': 'string'}, minItems=1, maxItems=100),
+        'cwd': DIRECTORY,
+        'timeout': field('integer', '最长执行秒数，超时终止进程组。', minimum=1, maximum=120, default=60),
+    }, ['argv', 'cwd']),
     schema('agent_inspect', '主控：按需检查角色、工具、平台、授权目录及文档/OCR 可选依赖。返回 unavailable_tools 和依赖信息；不调用模型，不保证网络可达或识别质量。', {}),
     schema('file_list', '文件管家：递归列出授权目录，或按文件名/内容子串检索；不支持 glob、正则或语义搜索。跳过隐藏文件、受保护目录和符号链接，每次最多扫描 5000 文件。返回 files、has_more、next_offset、scan_truncated；分页会重新扫描，目录变化可能影响结果。', {
         'path': DIRECTORY,
@@ -132,7 +142,7 @@ TOOLS = [
         'query': field('string', '非空搜索词；保留用户的实体、版本、日期和术语，需要时加入年份或 site:域名，不能编造用户未指定的事实。'),
     }, ['query']),
 ]
-MUTATIONS = {'file_write', 'file_edit', 'file_organize', 'document_convert', 'app_open', 'browser_open'}
+MUTATIONS = {'code_execute', 'file_write', 'file_edit', 'file_organize', 'document_convert', 'app_open', 'browser_open'}
 TOOL_SCHEMAS = {t['function']['name']: t['function']['parameters'] for t in TOOLS}
 
 
@@ -147,8 +157,12 @@ def validate_arguments(name, args):
     if extra: raise ValueError('未知工具参数：' + ', '.join(sorted(extra)))
     for key, value in args.items():
         field = fields[key]; kind = field['type']
-        valid = isinstance(value, str) if kind == 'string' else type(value) is bool if kind == 'boolean' else type(value) is int
+        valid = isinstance(value, str) if kind == 'string' else type(value) is bool if kind == 'boolean' else isinstance(value, list) if kind == 'array' else type(value) is int
         if not valid: raise ValueError(key + ' 参数类型必须为 ' + kind)
+        if kind == 'array':
+            if not field.get('minItems', 0) <= len(value) <= field.get('maxItems', 100): raise ValueError(key + ' 数量超出限制。')
+            if any(not isinstance(v, str) or '\x00' in v or len(v) > 20000 for v in value): raise ValueError(key + ' 必须是有效字符串参数数组。')
+            if not value[0].strip(): raise ValueError('可执行程序不能为空。')
         if 'enum' in field and value not in field['enum']: raise ValueError(key + ' 必须是：' + ', '.join(field['enum']))
         if kind == 'integer' and not field.get('minimum', value) <= value <= field.get('maximum', value): raise ValueError(key + ' 超出允许范围。')
         if kind == 'string':
@@ -196,7 +210,7 @@ class SearchResults(HTMLParser):
             self.current = None
 
 
-class Capabilities(FileTools):
+class Capabilities(FileTools, CodingTools):
     _app_cache = None
     _app_lock = threading.Lock()
     def __init__(self, store, check=lambda: None, local=False):
@@ -302,6 +316,7 @@ class Capabilities(FileTools):
 
     def preview(self, name, args):
         validate_arguments(name, args)
+        if name == 'code_execute': return self.code_preview(args)
         if name == 'file_edit': return self.edit_preview(args)
         if name == 'file_organize':
             moves = self.organize_plan(args['path'])
@@ -329,6 +344,12 @@ class Capabilities(FileTools):
         self.check()
         validate_arguments(name, args)
         if name in MUTATIONS and plan is None: raise PermissionError('操作必须先通过确认。')
+        if name == 'delivery_evaluate':
+            evaluator = getattr(self, 'delivery_evaluator', None)
+            if evaluator is None: raise PermissionError('评测工具只能在绑定任务的独立评测助手中执行。')
+            return evaluator(args)
+        if name == 'code_check': return self.code_check(args)
+        if name == 'code_execute': return self.code_execute(args, plan)
         if name in ('directory_list', 'file_glob', 'file_search', 'file_read_lines', 'file_edit'):
             return self.execute_file_tool(name, args, plan)
         if name == 'agent_inspect': return self.inspect_agents()
@@ -581,10 +602,14 @@ class Capabilities(FileTools):
         return {'agents': AGENTS, 'mode': 'local' if self.local else 'efficiency',
                 'agent_architecture': {'independent_contexts': True, 'bridge': 'main', 'parallel': False,
                                        'protocol_version': 1, 'strategies': AGENT_STRATEGIES},
+                'delivery_evaluation': {'framework': 'deepeval', 'required_version': '4.2.8',
+                                        'environment': '共用项目 Python 3.12+，独立子进程；依赖及模型可用性在实际评测时验证',
+                                        'metrics': ['任务完成度', '证据一致性', '交付质量'],
+                                        'uploads_enabled': False},
                 'document_parsers': dependencies, 'ocr_installed': bool(shutil.which('tesseract')),
                 'macos': sys.platform == 'darwin', 'network_enabled': not self.local,
                 'roots': self.store.setting('roots', [str(Path.cwd())]),
-                'unavailable_tools': [t for t in TOOL_AGENTS if (self.local and t in ('browser_read', 'browser_open', 'web_search'))
+                'unavailable_tools': [t for t in TOOL_AGENTS if (self.local and t in ('browser_read', 'browser_open', 'web_search', 'code_execute'))
                                       or (sys.platform != 'darwin' and t in ('app_open', 'browser_open'))],
                 'notice': 'OCR 中文语言包和网络服务可达性以实际调用为准。'}
 

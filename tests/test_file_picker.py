@@ -17,7 +17,7 @@ class FilePickerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(); self.root = Path(self.tmp.name).resolve()
         self.work = self.root/'work'; self.work.mkdir()
         self.file = self.work/'文件 with spaces.txt'; self.file.write_text('content')
-        self.runtime = Runtime(self.root/'data', offline=True)
+        self.runtime = Runtime(self.root/'data', offline=True, config={'evaluation': {'enabled': False}})
         self.runtime.update_settings({'roots': [str(self.work)]})
         self.picker = FilePicker(self.runtime); self.picker.window = Mock()
         self.webview = SimpleNamespace(FileDialog=SimpleNamespace(OPEN=10))

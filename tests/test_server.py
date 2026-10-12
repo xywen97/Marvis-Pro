@@ -13,7 +13,7 @@ from marvis.server import serve
 
 class ServerTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.runtime=Runtime(self.tmp.name,offline=True)
+        self.tmp=tempfile.TemporaryDirectory();self.runtime=Runtime(self.tmp.name,offline=True, config={'evaluation': {'enabled': False}})
         self.server,self.url=serve(self.runtime);parsed=urlparse(self.url)
         self.base=f'http://{parsed.netloc}';self.token=parse_qs(parsed.fragment)['token'][0]
     def tearDown(self):
@@ -27,7 +27,7 @@ class ServerTests(unittest.TestCase):
     def test_ui_and_state(self):
         status,body,headers=self.request('/')
         self.assertEqual(status,200);self.assertIn('工作台',body.decode());self.assertIn("frame-ancestors 'none'",headers['Content-Security-Policy'])
-        _,body,_=self.request('/api/state');self.assertEqual(len(json.loads(body)['agents']),6)
+        _,body,_=self.request('/api/state');self.assertEqual(len(json.loads(body)['agents']),8)
         for path in ('/markdown.js','/vendor/marked.js','/vendor/purify.js','/vendor/highlight.js','/vendor/highlight.css'):
             self.assertEqual(self.request(path)[0],200)
     def test_image_requires_authorization_and_valid_raster(self):

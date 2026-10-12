@@ -7,7 +7,7 @@ from marvis.runtime import Runtime
 class SessionManagementTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.runtime = Runtime(self.tmp.name, offline=True)
+        self.runtime = Runtime(self.tmp.name, offline=True, config={'evaluation': {'enabled': False}})
     def tearDown(self):
         self.runtime.close(); self.tmp.cleanup()
     def test_archive_restore_preserves_tree_and_survives_restart(self):
@@ -20,7 +20,7 @@ class SessionManagementTests(unittest.TestCase):
         self.assertEqual(r.session_tree(sid)['nodes'], before['nodes'])
         with self.assertRaisesRegex(ValueError, '恢复'): r.submit('你好', sid)
         self.assertNotEqual(r.new_session(sid), sid)
-        r.close(); self.runtime = Runtime(self.tmp.name, offline=True); r = self.runtime
+        r.close(); self.runtime = Runtime(self.tmp.name, offline=True, config={'evaluation': {'enabled': False}}); r = self.runtime
         self.assertEqual(r.sessions(True)[0]['id'], sid)
         r.session_action(sid, 'restore')
         self.assertEqual(r.messages(sid)[0]['id'], node)

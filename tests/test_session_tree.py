@@ -14,7 +14,7 @@ from marvis.capabilities import Capabilities
 
 class SessionTreeTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(); self.runtime = Runtime(self.tmp.name, offline=True)
+        self.tmp = tempfile.TemporaryDirectory(); self.runtime = Runtime(self.tmp.name, offline=True, config={'evaluation': {'enabled': False}})
         self.sid = self.runtime.new_session()
     def tearDown(self):self.runtime.close();self.tmp.cleanup()
     def turn(self, text):
@@ -77,7 +77,7 @@ class SessionTreeTests(unittest.TestCase):
     def test_branch_and_labels_survive_restart(self):
         first=self.turn('第一轮');self.turn('第二轮')
         self.runtime.navigate_tree(self.sid,first['id']);self.runtime.label_node(self.sid,first['id'],'分叉处')
-        self.runtime.close();self.runtime=Runtime(self.tmp.name,offline=True)
+        self.runtime.close();self.runtime=Runtime(self.tmp.name,offline=True, config={'evaluation': {'enabled': False}})
         self.assertEqual(len(self.runtime.messages(self.sid)),2)
         self.assertEqual(len(self.runtime.session_tree(self.sid)['nodes']),4)
         self.assertEqual(self.runtime.messages(self.sid)[-1]['label'],'分叉处')
@@ -132,7 +132,7 @@ class SessionTreeTests(unittest.TestCase):
         new_nodes=self.runtime.session_tree(self.sid)['nodes']
         self.assertTrue(original_ids.issubset({n['id'] for n in new_nodes}))
         self.assertEqual(len(self.runtime.sessions()),1)
-        self.runtime.close();self.runtime=Runtime(self.tmp.name,offline=True)
+        self.runtime.close();self.runtime=Runtime(self.tmp.name,offline=True, config={'evaluation': {'enabled': False}})
         self.assertEqual(self.runtime.session_tree(self.sid)['nodes'],new_nodes)
 
     def test_user_edit_after_tool_result_branches_before_original_user(self):

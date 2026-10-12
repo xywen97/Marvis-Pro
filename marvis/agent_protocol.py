@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 
-WORKERS = ['file', 'computer', 'app', 'browser', 'search']
+WORKERS = ['file', 'computer', 'app', 'browser', 'search', 'coding', 'evaluation']
 REQUEST_SCHEMA = {'type': 'object', 'additionalProperties': False, 'properties': {
     'agent': {'type': 'string', 'enum': WORKERS, 'description': '目标助手 ID。'},
     'objective': {'type': 'string', 'minLength': 1, 'maxLength': 10000, 'description': '明确的子任务目标和完成条件。'},

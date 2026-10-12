@@ -5,7 +5,7 @@ const readline=require('node:readline');
 const assert=require('node:assert/strict');
 const path=require('node:path');
 async function run(){
- const fixture=spawn(path.join(__dirname,'../.venv/bin/python'),[path.join(__dirname,'streaming_fixture.py'),'--tools'],{stdio:['pipe','pipe','pipe']});
+ const fixture=spawn(path.join(__dirname,'../.venv/bin/python'),[path.join(__dirname,'streaming_fixture.py'),'--team-tools'],{stdio:['pipe','pipe','pipe']});
  fixture.stderr.on('data',data=>process.stderr.write(data));let browser;
  try{
   const lines=readline.createInterface({input:fixture.stdout});
@@ -13,8 +13,8 @@ async function run(){
   browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE||undefined});
   const page=await browser.newPage({viewport:{width:1480,height:1100}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(data.url);await page.waitForFunction(()=>typeof liveConnected!=='undefined'&&liveConnected);
-  await page.locator('[data-page=office]').click();assert.equal(await page.locator('.office-station').count(),6);
-  assert.equal(await page.locator('.office-station[data-mode=idle]').count(),6);
+  await page.locator('[data-page=office]').click();assert.equal(await page.locator('.office-station').count(),8);
+  assert.equal(await page.locator('.office-station[data-mode=idle]').count(),8);
   const saved=await page.locator('.office-station[data-agent=main]').elementHandle();
   await page.locator('#office-start').click();await page.locator('#prompt').fill('请做一份本机健康评估');await page.locator('#prompt').press('Enter');
   await page.locator('[data-page=office]').click();
@@ -28,7 +28,7 @@ async function run(){
   await page.locator('.agent-computer').click();assert.equal(await page.locator('#office-agent-name').textContent(),'电脑管家');
   await page.screenshot({path:path.join(__dirname,'../docs/screenshots/office.png')});
   await page.waitForFunction(()=>document.querySelector('#office-done-count').textContent==='1');
-  assert.equal(await page.locator('#office-tool-count').textContent(),'2');
+  assert.equal(await page.locator('#office-tool-count').textContent(),'3');
   const waiting=await page.evaluate(()=>{
    const snapshot=JSON.parse(JSON.stringify(state));snapshot.tasks[0].status='waiting_approval';
    snapshot.tasks[0].events.push({kind:'tool_start',content:{agent:'file',tool:'file_write'}});
@@ -40,7 +40,7 @@ async function run(){
   await page.emulateMedia({reducedMotion:'no-preference'});await page.locator('[data-page=chat]').click();
   assert.equal(await page.locator('.agent-main .mascot').evaluate(n=>getComputedStyle(n).animationPlayState),'paused');
   assert.deepEqual(errors,[]);
-  console.log('Office UI passed: six stable avatars, real thinking/tool/completion states, animated transforms, nested task links, counters, narrow layout, reduced motion and background pause.');
+  console.log('Office UI passed: eight stable avatars, real thinking/tool/completion states, animated transforms, nested task links, counters, narrow layout, reduced motion and background pause.');
  }finally{if(browser)await browser.close();fixture.stdin.end();}
 }
 run().catch(error=>{console.error(error);process.exitCode=1});

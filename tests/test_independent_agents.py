@@ -16,7 +16,7 @@ from agent_fixture import dispatch_reply, report_reply, tool_reply
 class IndependentAgentTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.root = Path(self.tmp.name).resolve()
-        self.runtime = Runtime(self.root/'data')
+        self.runtime = Runtime(self.root/'data', config={'evaluation': {'enabled': False}})
         self.runtime.update_settings({'roots': [str(self.root)]})
 
     def tearDown(self):
@@ -62,6 +62,29 @@ class IndependentAgentTests(unittest.TestCase):
         results = [e['content']['result'] for e in self.runtime.store.events(task['id']) if e['kind'] == 'agent_result']
         for result in results: validate(result, RESULT_SCHEMA)
         self.assertEqual([r['agent'] for r in results], sequence)
+
+    def test_coding_has_shared_tools_private_context_and_real_evidence(self):
+        path = self.root / 'code.py'; path.write_text('answer = 42\n')
+        count = 0
+        def respond(messages, **kwargs):
+            nonlocal count
+            names = {t['function']['name'] for t in kwargs['tools']}
+            if self.main(kwargs):
+                return ChatResult.success('已核实') if messages[-1]['role'] == 'tool' else dispatch_reply('coding', '检查代码', str(path))
+            self.assertIn('file_edit', names); self.assertIn('code_check', names)
+            self.assertNotIn('system_info', names); self.assertNotIn('agent_dispatch', names)
+            self.assertNotIn('MAIN_PRIVATE', json.dumps(messages))
+            count += 1
+            if count == 1: return tool_reply('file_read_lines', {'path': str(path)})
+            if count == 2: return tool_reply('code_check', {'path': str(path)})
+            return report_reply('语法已核实')
+        task = self.submit(respond)
+        events = self.runtime.store.events(task['id'])
+        results = [e['content'] for e in events if e['kind'] == 'tool_result' and e['content'].get('scope') == 'worker']
+        self.assertEqual([r['agent'] for r in results], ['coding', 'coding'])
+        result = next(e['content']['result'] for e in events if e['kind'] == 'agent_result')
+        validate(result, RESULT_SCHEMA)
+        self.assertEqual(result['agent'], 'coding'); self.assertEqual(len(result['evidence']), 2)
 
     def test_handoff_is_returned_to_main_and_only_main_bridges_it(self):
         stages = []; request_ids = []
@@ -198,7 +221,7 @@ class IndependentAgentTests(unittest.TestCase):
         self.submit(respond, first['session_id'])
         self.assertIn('PRIVATE_MARK_1', observed[-1])
         copied = self.runtime.fork_session(first['session_id'], anchor)['session_id']
-        self.runtime.close(); self.runtime = Runtime(self.root/'data')
+        self.runtime.close(); self.runtime = Runtime(self.root/'data', config={'evaluation': {'enabled': False}})
         self.submit(respond, copied)
         self.assertIn('PRIVATE_MARK_1', observed[-1]); self.assertNotIn('PRIVATE_MARK_2', observed[-1])
         self.runtime.navigate_tree(first['session_id'], anchor)

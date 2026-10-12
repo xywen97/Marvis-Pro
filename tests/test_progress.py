@@ -12,7 +12,7 @@ class ProgressTests(unittest.TestCase):
     def test_interrupted_public_reply_is_saved_as_branchable_note(self):
         for cancel in (False, True):
             with self.subTest(cancel=cancel), tempfile.TemporaryDirectory() as folder:
-                runtime=Runtime(folder)
+                runtime=Runtime(folder, config={'evaluation': {'enabled': False}})
                 def chat(messages,on_delta=None,**kwargs):
                     on_delta('已经输出的处理说明')
                     if cancel:
@@ -57,7 +57,7 @@ class ProgressTests(unittest.TestCase):
 
     def test_stream_is_visible_before_model_returns_and_public_note_is_saved(self):
         with tempfile.TemporaryDirectory() as folder:
-            runtime=Runtime(folder); snapshots=[];rounds=[]
+            runtime=Runtime(folder, config={'evaluation': {'enabled': False}}); snapshots=[];rounds=[]
             def chat(messages,on_delta=None,**kwargs):
                 names = {t['function']['name'] for t in kwargs['tools']}
                 if 'agent_report' in names:
@@ -103,7 +103,7 @@ class ProgressTests(unittest.TestCase):
 
     def test_provider_without_streaming_is_identified(self):
         with tempfile.TemporaryDirectory() as folder:
-            runtime=Runtime(folder)
+            runtime=Runtime(folder, config={'evaluation': {'enabled': False}})
             try:
                 with patch.object(LLMClient,'configured',new_callable=lambda:property(lambda s:True)),patch.object(LLMClient,'chat',return_value=ChatResult.success('一次性响应')):
                     task=runtime.submit('请写一句问候')

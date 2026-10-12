@@ -63,8 +63,18 @@ orchestration:
   max_tool_calls: 128
   # 各助手独立执行策略的轮次上限。
   agent_rounds:
+    coding: 12
     file: 8
     computer: 4
     app: 4
     browser: 6
     search: 6
+
+# 交付质量门禁：默认开启，不可用/不通过不作为合格成果交付。
+evaluation:
+  enabled: true
+  threshold: 0.8
+  max_repairs: 2
+  timeout: 120
+  # python: /absolute/path/to/python3.12-with-deepeval
+  # 默认使用主引擎的当前 Python 解释器，与项目 .venv 保持一致。

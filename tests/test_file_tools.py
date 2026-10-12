@@ -15,7 +15,7 @@ class FileToolsTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name).resolve()
         self.work = self.root / 'work'; self.work.mkdir()
-        self.runtime = Runtime(self.root / 'data', offline=True)
+        self.runtime = Runtime(self.root / 'data', offline=True, config={'evaluation': {'enabled': False}})
         self.runtime.update_settings({'roots': [str(self.work)]})
         self.caps = Capabilities(self.runtime.store)
 

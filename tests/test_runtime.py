@@ -15,7 +15,7 @@ class RuntimeTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.work = self.root / 'work'; self.work.mkdir()
-        self.runtime = Runtime(self.root / 'data', offline=True)
+        self.runtime = Runtime(self.root / 'data', offline=True, config={'evaluation': {'enabled': False}})
         self.runtime.update_settings({'roots': [str(self.work)]})
 
     def tearDown(self):
@@ -42,7 +42,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(Capabilities(self.runtime.store).execute('knowledge_search', {'query': 'never-index-me'})['files'], [])
         sid = t['session_id']
         self.runtime.close()
-        self.runtime = Runtime(self.root / 'data', offline=True)
+        self.runtime = Runtime(self.root / 'data', offline=True, config={'evaluation': {'enabled': False}})
         self.assertEqual(len(self.runtime.messages(sid)), 2)
         self.assertEqual(self.runtime.snapshot()['knowledge_count'], 1)
 

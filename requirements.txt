@@ -1,2 +1,3 @@
-# CLI, TUI, HTTP service and knowledge store otherwise use the standard library.
+# Project runtime: Python >=3.12.
 PyYAML>=6,<7
+-r requirements-eval.txt

@@ -4,7 +4,7 @@ const readline=require('node:readline');
 const assert=require('node:assert/strict');
 const path=require('node:path');
 async function run(){
- const fixture=spawn(path.join(__dirname,'../.venv/bin/python'),[path.join(__dirname,'streaming_fixture.py'),'--tools'],{stdio:['pipe','pipe','pipe']});
+ const fixture=spawn(path.join(__dirname,'../.venv/bin/python'),[path.join(__dirname,'streaming_fixture.py'),'--team-tools'],{stdio:['pipe','pipe','pipe']});
  fixture.stderr.on('data',data=>process.stderr.write(data));let browser;
  try{
   const lines=readline.createInterface({input:fixture.stdout});
@@ -12,7 +12,7 @@ async function run(){
   browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE||undefined});
   const page=await browser.newPage({viewport:{width:1480,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(data.url);await page.waitForFunction(()=>typeof liveConnected!=='undefined'&&liveConnected);
-  assert.equal(await page.locator('.team-agent[data-mode=idle]').count(),6);
+  assert.equal(await page.locator('.team-agent[data-mode=idle]').count(),8);
   const main=await page.locator('.team-main').elementHandle();
   assert.equal(await page.locator('.team-main .team-character').evaluate(n=>getComputedStyle(n).animationName),'team-idle');
   await page.evaluate(()=>{

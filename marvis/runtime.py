@@ -11,6 +11,7 @@ from llm_client import LLMClient
 from marvis.store import Store, uid
 from marvis.capabilities import Capabilities, TOOLS, MUTATIONS, validate_arguments
 from marvis.team import AGENTS, TOOL_AGENTS, tool_message
+from marvis.evaluation import enabled as evaluation_enabled
 
 
 class Cancelled(Exception): pass
@@ -348,9 +349,9 @@ class Runtime:
     def _check(self, ident):
         if self.closed.is_set() or self.cancels[ident].is_set(): raise Cancelled('任务已停止。')
 
-    def _tool(self, ident, caps, name, args, step=0, call_id=None, scope=None, request_id=None):
+    def _tool(self, ident, caps, name, args, step=0, call_id=None, scope=None, request_id=None, actor=None):
         self._check(ident)
-        group = TOOL_AGENTS.get(name, 'main') if isinstance(name, str) else 'main'
+        group = actor or (TOOL_AGENTS.get(name, 'main') if isinstance(name, str) else 'main')
         context = {'step': step, 'call_id': call_id or uid()}
         if scope: context.update(scope=scope, request_id=request_id)
         self.store.event(ident, 'tool_start', {'agent': group, 'tool': name, 'arguments': args, **context})
@@ -430,8 +431,21 @@ class Runtime:
             # natural-language tasks go through the independent main/worker loop.
             direct = action or (self.direct(prompt, settings['roots']) if self.offline or prompt.startswith('/tool ') else None)
             if direct:
-                result = self._tool(ident, caps, direct['tool'], direct.get('arguments', {}))
-                reply = self.format_result(result)
+                if direct['tool'] == 'delivery_evaluate':
+                    from marvis.coordinator import Coordinator
+                    validate_arguments('delivery_evaluate', direct.get('arguments', {}))
+                    review = Coordinator(self, ident, session_id, caps, settings).dispatch({
+                        'agent': 'evaluation', 'objective': prompt, 'context': direct['arguments']['candidate']})
+                    if review['status'] != 'completed': raise ValueError(review['summary'])
+                    reply = review['summary']
+                else:
+                    result = self._tool(ident, caps, direct['tool'], direct.get('arguments', {}))
+                    reply = self.format_result(result)
+                    if direct['tool'] in ('file_write', 'file_edit', 'document_convert', 'code_execute') and not result.get('rejected'):
+                        from marvis.coordinator import Coordinator
+                        coordinator = Coordinator(self, ident, session_id, caps, settings)
+                        rejected = coordinator.gate_candidate(reply)
+                        if rejected: coordinator.blocked(rejected)
             else:
                 reply = self._chat(ident, session_id, prompt, caps, settings)
             self._check(ident)
@@ -498,12 +512,17 @@ class Runtime:
             raise ValueError('当前任务证据超过上下文预算，请拆分任务或从近期执行节点继续。')
         return projected
 
-    def _model_turn(self, ident, client, messages, step, tool_choice='auto', tools=None, agent='main', request_id=None):
+    def _model_turn(self, ident, client, messages, step, tool_choice='auto', tools=None, agent='main', request_id=None, deadline=None):
         self.store.event(ident, 'model_start', {'text': '正在生成处理方案与回复', 'step': step, 'model': client.model, 'agent': agent, 'request_id': request_id})
         parts = []; event_id = None; last_flush = 0.0
+        # Drafts must not appear as a finished answer before the gate accepts them.
+        hold_candidate = agent == 'main' and evaluation_enabled(self)
         tool_events = {}; tool_parts = {}
-        def tool_delta(index, call):
+        def check_turn():
             self._check(ident)
+            if deadline is not None and time.monotonic() >= deadline: raise TimeoutError('评测模型请求达到总时间上限。')
+        def tool_delta(index, call):
+            check_turn()
             data = {'step': step, 'index': index, 'call_id': call['id'], 'tool': call['function']['name'], 'arguments': call['function']['arguments'], 'agent': agent, 'request_id': request_id}
             tool_parts[index] = data
             now = time.monotonic()
@@ -517,6 +536,7 @@ class Runtime:
         def flush(force=False):
             nonlocal event_id, last_flush
             now = time.monotonic()
+            if hold_candidate: return
             if not parts or (event_id is not None and not force and now - last_flush < .1): return
             data = {'text': ''.join(parts), 'step': step, 'agent': agent, 'request_id': request_id}
             if event_id is None: event_id = self.store.event(ident, 'assistant_stream' if agent == 'main' else 'agent_stream', data)
@@ -525,9 +545,9 @@ class Runtime:
                 self.status(ident, 'running')
             last_flush = now
         def delta(text):
-            self._check(ident); parts.append(text); flush()
+            check_turn(); parts.append(text); flush()
         result = client.chat(self.bounded_context(messages), tools=TOOLS if tools is None else tools, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta)
-        self._check(ident)
+        check_turn()
         flush(True)
         for index, data in tool_parts.items():
             self.store.execute('UPDATE events SET content=? WHERE id=?', (json.dumps(data, ensure_ascii=False), tool_events[index][0]))
@@ -540,6 +560,9 @@ class Runtime:
             self.store.execute("UPDATE events SET kind='assistant_note' WHERE id=?", (event_id,))
             self.store.record_event_entry(ident,event_id,'assistant_note',{'text':result.content,'step':step})
             self.status(ident, 'running')
+        if hold_candidate and result.ok and result.content:
+            kind = 'assistant_note' if result.tool_calls else 'delivery_candidate'
+            self.store.event(ident, kind, {'text': result.content, 'step': step, 'agent': 'main', 'provisional': True})
         return result
 
     def _chat(self, ident, session_id, prompt, caps, settings):

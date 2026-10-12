@@ -10,7 +10,7 @@ window.MarvisTeam = (() => {
  let initialized=false, owner='main', currentId=null, flight=null, queue=[], reduced=matchMedia('(prefers-reduced-motion: reduce)');
  const seen=new Map();let seeded=false;
  function init(snapshot){
-  if(initialized)return;initialized=true;const box=$('#agents');box.classList.add('animated-team');
+  if(initialized)return;initialized=true;const box=$('#agents');$('.team-heading span').textContent=snapshot.agents.length;box.classList.add('animated-team');
   for(const agent of snapshot.agents){
    const row=el('button','agent-row team-agent team-'+agent.id);row.type='button';row.dataset.agent=agent.id;
    row.title=agent.guidance||agent.role;
@@ -26,6 +26,9 @@ window.MarvisTeam = (() => {
   const marker=el('span','team-transfer','✦');marker.setAttribute('aria-hidden','true');box.append(marker);
  }
  function destination(event){
+  if(['model_start','agent_start'].includes(event.kind))return event.content.agent||'main';
+  if(['tool_result','tool_error','rejected'].includes(event.kind))return event.content.agent||'main';
+  if(event.kind==='agent_result')return 'main';
   if(event.kind==='tool_start'){
    const tool=event.content.tool||'';
    return event.content.agent||(tool==='web_search'||tool==='knowledge_search'?'search':tool.startsWith('system_')?'computer':tool.startsWith('app_')?'app':tool.startsWith('browser_')?'browser':'file');
@@ -90,7 +93,7 @@ window.MarvisTeam = (() => {
     if(event.kind==='tool_start'){const agent=destination(event);if(modes[agent])modes[agent]={...modes[agent],mode:'done'};}
    }
   }
-  if(Object.values(modes).some(item=>item.mode==='working')&&modes.main.mode==='thinking')modes.main={...modes.main,mode:'coordinating'};
+  if(Object.entries(modes).some(([id,item])=>id!=='main'&&['working','thinking'].includes(item.mode))&&modes.main.mode==='thinking')modes.main={...modes.main,mode:'coordinating'};
   for(const row of document.querySelectorAll('.team-agent')){
    const item=modes[row.dataset.agent];if(row.dataset.mode!==item.mode)row.dataset.mode=item.mode;
    row.querySelector('.agent-status').textContent=labels[item.mode];

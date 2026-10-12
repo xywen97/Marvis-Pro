@@ -1,0 +1,2 @@
+# DeepEval shares the project Python >=3.12 environment.
+deepeval==4.2.8

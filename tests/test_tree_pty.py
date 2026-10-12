@@ -34,7 +34,7 @@ class UI(Terminal):
   path=self.runtime.store.entry_branch(self.session)
   output.write_text(json.dumps({'session':self.session,'input':self.input,'kind':path[-1]['kind'] if path else 'root','nodes':len(self.runtime.session_tree(self.session)['nodes'])},ensure_ascii=False))
 with tempfile.TemporaryDirectory() as directory:
- r=Runtime(directory,offline=True);r.offline=False;r.model=lambda settings:Model()
+ r=Runtime(directory,offline=True,config={'evaluation': {'enabled': False}});r.offline=False;r.model=lambda settings:Model()
  Capabilities.execute=lambda self,name,args,*rest:{'demo':True}
  sid=r.new_session();task=r.submit('执行评估',sid)
  while task['id'] in r.cancels:time.sleep(.01)

@@ -6,7 +6,7 @@ from marvis.runtime import Runtime
 
 class EmptySessionTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.runtime=Runtime(self.tmp.name,offline=True)
+        self.tmp=tempfile.TemporaryDirectory();self.runtime=Runtime(self.tmp.name,offline=True, config={'evaluation': {'enabled': False}})
     def tearDown(self):self.runtime.close();self.tmp.cleanup()
     def test_repeated_and_concurrent_new_requests_reuse_one_empty_session(self):
         with ThreadPoolExecutor(max_workers=8) as pool:

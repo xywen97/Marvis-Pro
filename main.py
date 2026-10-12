@@ -39,6 +39,8 @@ def run_once(runtime, text, session_id=None):
 
 
 def main():
+    if sys.version_info < (3, 12):
+        raise SystemExit('MarvisXY 需要 Python 3.12+；请重新创建项目 .venv 并安装依赖。')
     parser = argparse.ArgumentParser(description='MarvisXY macOS 桌面 App 与交互式终端')
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--app', action='store_true', help='启动 macOS WKWebView 桌面 App')

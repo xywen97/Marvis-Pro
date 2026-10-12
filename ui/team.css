@@ -15,3 +15,7 @@
 body.office-view .team-panel *{animation-play-state:paused!important}
 @media(max-width:1150px){.team-panel *{animation-play-state:paused!important}}
 @media(prefers-reduced-motion:reduce){.team-panel *{animation:none!important;transition:none!important}}
+
+.team-coding .team-scarf{fill:#79aaa6}
+
+.team-evaluation .team-scarf{fill:#a4b878}
