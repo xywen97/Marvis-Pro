@@ -6,6 +6,7 @@
 .office-table{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
 .office-station{position:absolute;transform:translate(-50%,-50%);width:16%;border:0;background:transparent;border-radius:16px;padding:0;min-width:0;transition:background .25s;display:flex;flex-direction:column;align-items:center;line-height:1.3}
 .office-station:hover,.office-station.selected{background:transparent}
+.office-agent-card button[hidden]{display:none}
 .office-station:focus-visible{outline:2px solid #7b9bf3;outline-offset:4px}
 .station-label{font-size:clamp(9px,1vw,12px);font-weight:600;color:#62738d;position:relative;z-index:1;white-space:nowrap;padding:3px 7px;border:1px solid transparent;border-radius:7px;transition:background .25s,border-color .25s}
 .office-station.selected .station-label{background:#fff;border-color:#b8cbf6;color:#4e73c7;box-shadow:0 3px 12px #577dca12}
@@ -19,6 +20,20 @@
 .mascot-body,.mascot-head{fill:#263548}.mascot-arms{fill:none;stroke:#263548;stroke-width:12;stroke-linecap:round}.mascot-mark{stroke:#fff;stroke-width:3;stroke-linecap:round;opacity:.2}.scarf{fill:#6b91f3}.work-spark{fill:none;stroke:#9db6ed;stroke-width:2;opacity:0}
 .agent-computer .scarf{fill:#80b79e}.agent-file .scarf{fill:#a494cf}.agent-app .scarf{fill:#e3bc75}.agent-browser .scarf{fill:#88b7d1}.agent-search .scarf{fill:#d7a397}.agent-context .scarf{fill:#9cadd0}
 .mascot{transform-box:fill-box;transform-origin:center bottom;animation:office-breathe 5s ease-in-out infinite}.office-station:nth-child(2n) .mascot{animation-delay:-2s}.coffee-steam{animation:office-steam 4s ease-in-out infinite}
+.mascot-head-group{transform-box:fill-box;transform-origin:center bottom;animation:office-head-idle 8.5s ease-in-out infinite;animation-delay:var(--cat-delay,0s)}
+.mascot-eyes{transform-box:fill-box;transform-origin:center;animation:office-blink 6.2s linear infinite;animation-delay:var(--cat-delay,0s)}
+.mascot-arms{transform-box:fill-box;transform-origin:center}
+.office-station[data-mode=thinking] .mascot-head-group{animation:office-head-think 2s ease-in-out infinite}
+.office-station[data-mode=working] .mascot-head-group{animation:office-head-work .8s ease-in-out infinite}
+.office-station[data-mode=working] .mascot-arms{animation:office-paws .65s ease-in-out infinite}
+.office-station[data-mode=thinking] .mascot-eyes{animation-duration:4.8s}.office-station[data-mode=working] .mascot-eyes{animation-duration:3.8s}
+.office-station[data-mode=waiting] .mascot-head-group{animation:office-head-think 4s ease-in-out infinite}
+.office-station:is([data-mode=done],[data-mode=error],[data-mode=stopped]) .mascot-head-group{animation:none}
+@keyframes office-blink{0%,83%,89%,100%{transform:scaleY(1)}85%,87%{transform:scaleY(.08)}}
+@keyframes office-head-idle{0%,30%,62%,100%{transform:rotate(0)}40%,52%{transform:rotate(4deg)}78%,85%{transform:rotate(-3deg)}}
+@keyframes office-head-think{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(5deg)}}
+@keyframes office-head-work{0%,100%{transform:rotate(-1deg)}50%{transform:translateY(1px) rotate(2deg)}}
+@keyframes office-paws{0%,100%{transform:rotate(-2deg)}50%{transform:translateY(-2px) rotate(2deg)}}
 .office-station[data-mode=thinking] .mascot{animation:office-think 1.6s ease-in-out infinite}.office-station[data-mode=working] .mascot{animation:office-type .65s ease-in-out infinite}
 .office-station[data-mode=thinking] .monitor-screen,.office-station[data-mode=working] .monitor-screen{fill:#dce9ff}.office-station[data-mode=thinking] .screen-lines,.office-station[data-mode=working] .screen-lines{stroke:#7b9bd3;opacity:.8;animation:office-screen 1.4s ease-in-out infinite}
 .office-station[data-mode=working] .work-spark{animation:office-spark 1.6s ease-in-out infinite}.office-station[data-mode=working] .station-status,.office-station[data-mode=thinking] .station-status{color:#6685b9}

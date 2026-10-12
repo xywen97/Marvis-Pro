@@ -1,11 +1,11 @@
 'use strict';
 window.MarvisTeam = (() => {
  const labels={idle:'待命',thinking:'处理中',coordinating:'协调中',working:'执行中',waiting:'待确认',done:'已完成',error:'异常',stopped:'已停止'};
- const avatar=`<svg viewBox="0 0 56 56" aria-hidden="true"><g class="team-character">
+ const avatar=`<svg viewBox="0 0 56 56" aria-hidden="true"><g class="team-character"><g class="team-face-group">
  <path class="team-head" d="M13 20 11 9l12 6c5-2 8-2 13 0l10-6-1 12c8 14 0 24-17 24S5 34 13 20z"/>
- <path class="team-scarf" d="M12 38q16 8 31 0v7q-16 8-31 0z"/><path class="team-scarf" d="m39 44 3 9 7-2-5-10z"/>
  <g class="team-eyes"><ellipse cx="21" cy="28" rx="3" ry="4"/><ellipse cx="35" cy="28" rx="3" ry="4"/></g>
  <path d="m26 34 2 2 2-2" class="team-mouth"/></g>
+ <path class="team-scarf" d="M12 38q16 8 31 0v7q-16 8-31 0z"/><path class="team-scarf" d="m39 44 3 9 7-2-5-10z"/></g>
  <g class="team-check"><circle cx="44" cy="13" r="9"/><path d="m40 13 3 3 5-6"/></g></svg>`;
  let initialized=false, owner='main', currentId=null, flight=null, queue=[], reduced=matchMedia('(prefers-reduced-motion: reduce)');
  const seen=new Map();let seeded=false, renderedSession;
@@ -13,6 +13,7 @@ window.MarvisTeam = (() => {
   if(initialized)return;initialized=true;const box=$('#agents');$('.team-heading span').textContent=snapshot.agents.length;box.classList.add('animated-team');
   for(const agent of snapshot.agents){
    const row=el('button','agent-row team-agent team-'+agent.id);row.type='button';row.dataset.agent=agent.id;
+   row.style.setProperty('--cat-delay',(-snapshot.agents.indexOf(agent)*.73-1)+'s');
    row.title=agent.guidance||agent.role;
    const art=el('div','agent-avatar');art.innerHTML=avatar;
    const info=el('div','agent-info');info.append(el('strong','',agent.name),el('small','',agent.role));

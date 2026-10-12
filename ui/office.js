@@ -31,11 +31,13 @@ window.MarvisOffice = (() => {
   <g class="mascot">
    <path d="M61 110l-6 29h19l6-22 6 22h19l-6-29z" class="mascot-body"/>
    <path d="M62 77c-13 13-13 35-5 45 11 12 35 12 46 0 8-13 6-35-6-45z" class="mascot-body"/>
-   <path d="M48 73c-7-12-6-27 1-37l-2-19 19 9c9-3 20-3 29 0l18-9-2 19c8 13 9 28 1 40-13 16-51 15-64-3z" class="mascot-head"/>
+   <g class="mascot-head-group">
+    <path d="M48 73c-7-12-6-27 1-37l-2-19 19 9c9-3 20-3 29 0l18-9-2 19c8 13 9 28 1 40-13 16-51 15-64-3z" class="mascot-head"/>
+    ${front?`<g class="mascot-face"><g class="mascot-eyes"><ellipse cx="64" cy="56" rx="3" ry="4"/><ellipse cx="96" cy="56" rx="3" ry="4"/></g><path d="m76 66 4 3 4-3m-4 3v4"/></g>`:'<path d="M69 46h22" class="mascot-mark"/>'}
+   </g>
    <path d="M51 81q29 12 58-1l1 12q-30 14-61 0z" class="scarf"/>
    <path d="m101 91 3 24 12-3-7-23" class="scarf-tail scarf"/>
    <path d="m60 103-18-12m58 12 18-12" class="mascot-arms"/>
-   ${front?`<g class="mascot-face"><ellipse cx="64" cy="56" rx="3" ry="4"/><ellipse cx="96" cy="56" rx="3" ry="4"/><path d="m76 66 4 3 4-3m-4 3v4"/></g>`:'<path d="M69 46h22" class="mascot-mark"/>'}
   </g>
   ${main?'<ellipse cx="80" cy="144" rx="40" ry="8" class="command-light"/>':front?'':'<rect x="48" y="116" width="64" height="34" rx="12" class="chair-back"/>'}
   <g class="work-spark"><path d="M128 39v12m-6-6h12M29 65v8m-4-4h8"/></g>
@@ -159,6 +161,7 @@ window.MarvisOffice = (() => {
   for(const agent of snapshot.agents){
    const station=el('button','office-station agent-'+agent.id);station.type='button';station.dataset.agent=agent.id;
    const index=assistants.indexOf(agent),angle=-Math.PI/2+index*Math.PI*2/assistants.length;
+   station.style.setProperty('--cat-delay',(-index*.73-1)+'s');
    const isMain=agent.id==='main';
    const x=isMain?450:450+335*Math.cos(angle),y=isMain?335:350+245*Math.sin(angle);
    seats.set(agent.id,{x,y});

@@ -16,6 +16,19 @@ async function run(){
   await page.locator('[data-page=office]').click();assert.equal(await page.locator('.office-station').count(),9);
   assert.equal(await page.locator('.office-station[data-mode=idle]').count(),9);
   assert.equal(await page.locator('.seat-indicator[data-active=false]').count(),8);
+  const idleMotion=await page.evaluate(()=>{
+   function sample(selector,name,progress){
+    const node=document.querySelector(selector),animation=node.getAnimations().find(a=>a.animationName===name);
+    animation.pause();const timing=animation.effect.getTiming();animation.currentTime=Number(timing.duration)*progress+timing.delay;
+    const matrix=new DOMMatrixReadOnly(getComputedStyle(node).transform);animation.play();return {yScale:matrix.d,tilt:matrix.b};
+   }
+   return {open:sample('.agent-main .mascot-eyes','office-blink',.8),closed:sample('.agent-main .mascot-eyes','office-blink',.86),
+    resting:sample('.agent-file .mascot-head-group','office-head-idle',.2),tilted:sample('.agent-file .mascot-head-group','office-head-idle',.45),
+    backTilt:sample('.agent-coding .mascot-head-group','office-head-idle',.45)};
+  });
+  assert(idleMotion.open.yScale>.9&&idleMotion.closed.yScale<.15,'blink must visibly close the eyes');
+  assert(Math.abs(idleMotion.resting.tilt)<.01&&Math.abs(idleMotion.tilted.tilt)>.05,'idle head tilts independently of body');
+  assert(Math.abs(idleMotion.backTilt.tilt)>.05,'back-facing cats also tilt their heads');
   const compacting=await page.evaluate(()=>{
    const snapshot={agents:state.agents,tasks:[{id:'context-qa',status:'running',events:[
     {kind:'context_compaction_start',content:{agent:'context',target_agent:'coding'}}]}]};
@@ -46,8 +59,11 @@ async function run(){
   const first=await page.locator('.agent-computer .mascot').evaluate(n=>getComputedStyle(n).transform);
   await page.waitForTimeout(100);const second=await page.locator('.agent-computer .mascot').evaluate(n=>getComputedStyle(n).transform);
   assert.notEqual(first,second,'working avatar must animate');
+  assert.equal(await page.locator('.agent-computer .mascot-head-group').evaluate(n=>getComputedStyle(n).animationName),'office-head-work');
+  assert.equal(await page.locator('.agent-computer .mascot-arms').evaluate(n=>getComputedStyle(n).animationName),'office-paws');
   assert(await saved.evaluate(node=>node===document.querySelector('.agent-main')),'avatar must retain its DOM and animation');
   await page.locator('.agent-computer').click();assert.equal(await page.locator('#office-agent-name').textContent(),'电脑管家');
+  assert.equal(await page.locator('#office-evaluation-start').isVisible(),false);
   await page.screenshot({path:process.env.MARVIS_OFFICE_SCREENSHOT_PATH||path.join(__dirname,'../docs/screenshots/office.png')});
   await page.waitForSelector('.office-flow[data-agent=computer][data-direction=return]');
   const directions=await page.evaluate(()=>{
@@ -127,6 +143,8 @@ async function run(){
    MarvisOffice.render(state);return result;
   });assert.deepEqual(reducedFlow,{animation:'none',packet:'none'});
   assert.equal(await page.locator('.agent-main .mascot').evaluate(n=>getComputedStyle(n).animationName),'none');
+  assert.equal(await page.locator('.agent-main .mascot-head-group').evaluate(n=>getComputedStyle(n).animationName),'none');
+  assert.equal(await page.locator('.agent-main .mascot-eyes').evaluate(n=>getComputedStyle(n).animationName),'none');
   await page.emulateMedia({reducedMotion:'no-preference'});await page.locator('[data-page=chat]').click();
   assert.equal(await page.locator('.agent-main .mascot').evaluate(n=>getComputedStyle(n).animationPlayState),'paused');
   assert.deepEqual(errors,[]);

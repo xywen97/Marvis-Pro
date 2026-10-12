@@ -19,5 +19,13 @@ body.office-view .team-panel *{animation-play-state:paused!important}
 @media(prefers-reduced-motion:reduce){.team-panel *{animation:none!important;transition:none!important}}
 
 .team-coding .team-scarf{fill:#79aaa6}
+.team-face-group{transform-box:fill-box;transform-origin:center bottom;animation:team-head-idle 8.5s ease-in-out infinite;animation-delay:var(--cat-delay,0s)}
+.team-agent .team-eyes{animation-delay:var(--cat-delay,0s)}
+.team-agent:is([data-mode=thinking],[data-mode=coordinating],[data-mode=waiting]) .team-face-group{animation:team-head-think 2.8s ease-in-out infinite}
+.team-agent[data-mode=working] .team-face-group{animation:team-head-work .8s ease-in-out infinite}
+.team-agent:is([data-mode=done],[data-mode=error],[data-mode=stopped]) .team-face-group{animation:none}
+@keyframes team-head-idle{0%,30%,62%,100%{transform:rotate(0)}40%,52%{transform:rotate(4deg)}78%,85%{transform:rotate(-3deg)}}
+@keyframes team-head-think{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(3deg)}}
+@keyframes team-head-work{0%,100%{transform:rotate(-1deg)}50%{transform:translateY(.5px) rotate(2deg)}}
 
 .team-evaluation .team-scarf{fill:#a4b878}

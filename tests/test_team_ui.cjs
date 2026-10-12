@@ -46,6 +46,7 @@ async function run(){
   assert.deepEqual(meters.empty,{main:'未采样 / 256k',active:0,status:'团队待命'});
   const main=await page.locator('.team-main').elementHandle();
   assert.equal(await page.locator('.team-main .team-character').evaluate(n=>getComputedStyle(n).animationName),'team-idle');
+  assert.equal(await page.locator('.team-main .team-face-group').evaluate(n=>getComputedStyle(n).animationName),'team-head-idle');
   await page.evaluate(()=>{
    window.handoffs=[];
    new MutationObserver(records=>{for(const r of records)if(r.attributeName==='data-handoff')window.handoffs.push(r.target.dataset.handoff);}).observe(document.querySelector('#agents'),{attributes:true});
@@ -55,6 +56,7 @@ async function run(){
   await page.waitForFunction(()=>document.querySelector('.team-computer').dataset.mode==='working');
   assert.equal(await page.locator('.team-main').getAttribute('data-mode'),'coordinating');
   assert.equal(await page.locator('.team-computer .agent-status').textContent(),'执行中');
+  assert.equal(await page.locator('.team-computer .team-face-group').evaluate(n=>getComputedStyle(n).animationName),'team-head-work');
   const first=await page.locator('.team-computer .team-character').evaluate(n=>getComputedStyle(n).transform);
   await page.waitForTimeout(100);
   assert.notEqual(await page.locator('.team-computer .team-character').evaluate(n=>getComputedStyle(n).transform),first);
@@ -91,6 +93,7 @@ async function run(){
   });assert.deepEqual(feedback,{waiting:'waiting',error:'error',stopped:'stopped'});
   await page.emulateMedia({reducedMotion:'reduce'});
   assert.equal(await page.locator('.team-main .team-character').evaluate(n=>getComputedStyle(n).animationName),'none');
+  assert.equal(await page.locator('.team-main .team-face-group').evaluate(n=>getComputedStyle(n).animationName),'none');
   await page.emulateMedia({reducedMotion:'no-preference'});await page.locator('[data-page=office]').click();
   assert.equal(await page.locator('.team-main .team-character').evaluate(n=>getComputedStyle(n).animationPlayState),'paused');
   assert.equal(await page.locator('.team-transfer.visible').count(),0);
