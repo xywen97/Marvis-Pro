@@ -9,6 +9,11 @@ const signatures = {};
 const statuses = {queued:'排队中',running:'执行中',waiting_approval:'等待确认',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断'};
 const busy = t => ['queued','running','waiting_approval'].includes(t.status);
 let newSessionPending=null, showArchived=false, deletingSession=null;
+// Keep deleted IDs hidden even if an in-flight state snapshot predates deletion.
+const deletedSessions=new Set();
+function withoutDeletedSessions(value){
+ return {...value,sessions:value.sessions.filter(s=>!deletedSessions.has(s.id)),archived_sessions:(value.archived_sessions||[]).filter(s=>!deletedSessions.has(s.id)),tasks:value.tasks.filter(t=>!deletedSessions.has(t.session_id))};
+}
 function visibleSessions() {
  const empty=state.sessions.find(s=>s.id===session&&s.is_empty)||state.sessions.find(s=>s.is_empty);
  return showArchived?(state.archived_sessions||[]):state.sessions.filter(s=>!s.is_empty||s.id===empty?.id);
@@ -29,7 +34,7 @@ function showPage(next) { page=next;document.body.classList.toggle('office-view'
 function changed(name, value) { const sig=JSON.stringify(value); if(Object.prototype.hasOwnProperty.call(signatures,name)&&signatures[name]===sig)return false; signatures[name]=sig;return true; }
 function acceptState(value) {
  stateUpdates=stateUpdates.catch(()=>{}).then(async()=>{
-  state=value;
+  state=withoutDeletedSessions(value);
   if(session&&!allSessions().some(s=>s.id===session)){session=state.sessions[0]?.id||null;$('#prompt').value='';await renderMessages();}
   $('#connection').textContent='● 已连接';$('#connection').style.color='';renderState();
   if(session&&changed('messages-session',[session,allSessions().find(s=>s.id===session)?.active_leaf,allSessions().find(s=>s.id===session)?.active_entry,state.tasks.filter(t=>t.session_id===session).map(t=>[t.id,t.status,t.updated])]))await renderMessages();
@@ -211,12 +216,56 @@ function renderSessionList(){
  if(!box.children.length)box.append(el('p','session-empty',showArchived?'没有已归档的对话':'还没有对话'));
 }
 async function manageSession(id,action){
+ if(action==='delete')return deleteSession(id);
  await api('session-action',{session_id:id,action});
- if(action==='delete'){$('#session-delete-dialog').close();deletingSession=null;}
  if(session===id&&action!=='restore'){session=null;$('#prompt').value='';}
  if(action==='restore'){showArchived=false;session=id;}
  await refresh();if(!session)session=state.sessions[0]?.id||null;
  await renderMessages();renderState();toast(action==='archive'?'对话已归档':action==='restore'?'对话已恢复':'对话已删除');
+}
+async function deleteSession(id){
+ if(deletedSessions.has(id))return;
+ const saved={sessions:state.sessions.filter(s=>s.id===id),archived:(state.archived_sessions||[]).filter(s=>s.id===id),tasks:state.tasks.filter(t=>t.session_id===id),session,prompt:$('#prompt').value};
+ const rows=[...$('#sessions').querySelectorAll('.session-entry')];
+ const positions=new Map(rows.map(row=>[row.dataset.session,row.getBoundingClientRect().top]));
+ const row=rows.find(row=>row.dataset.session===id);
+ const motion=!matchMedia('(prefers-reduced-motion: reduce)').matches;
+ let exitGhost;
+ if(row&&motion){
+  const rect=row.getBoundingClientRect(),ghost=row.cloneNode(true);
+  ghost.classList.add('session-delete-ghost');ghost.removeAttribute('data-session');ghost.setAttribute('aria-hidden','true');ghost.inert=true;
+  ghost.querySelector('.session-menu')?.remove();
+  Object.assign(ghost.style,{top:rect.top+'px',left:rect.left+'px',width:rect.width+'px',height:rect.height+'px'});
+  document.body.append(ghost);exitGhost=ghost;
+  ghost.animate([{opacity:1,transform:'translateX(0) scale(1)'},{opacity:0,transform:'translateX(-10px) scale(.98)'}],{duration:180,easing:'cubic-bezier(.2,.7,.2,1)',fill:'forwards'}).finished.then(()=>ghost.remove(),()=>ghost.remove());
+ }
+ $('#session-delete-dialog').close();deletingSession=null;
+ deletedSessions.add(id);state=withoutDeletedSessions(state);
+ if(session===id){
+  session=state.sessions[0]?.id||null;$('#prompt').value='';
+  ++messageVersion;AgentProgress.release($('#messages'));$('#messages').replaceChildren();
+  $('#messages').dataset.session=String(session);
+ }
+ const fallback=session;
+ renderState();safe(renderMessages);
+ if(motion)for(const next of $('#sessions').querySelectorAll('.session-entry')){
+  const previous=positions.get(next.dataset.session),delta=previous-next.getBoundingClientRect().top;
+  if(Number.isFinite(delta)&&delta)next.animate([{transform:`translateY(${delta}px)`},{transform:'translateY(0)'}],{duration:240,easing:'cubic-bezier(.2,.7,.2,1)'});
+ }
+ try{
+  await api('session-action',{session_id:id,action:'delete'});
+  toast('对话已删除');
+ }catch(error){
+  exitGhost?.remove();
+  deletedSessions.delete(id);
+  for(const [key,items] of [['sessions',saved.sessions],['archived_sessions',saved.archived],['tasks',saved.tasks]]){
+   state[key]=[...state[key],...items.filter(item=>!state[key].some(current=>current.id===item.id))];
+  }
+  state.sessions.sort((a,b)=>b.created-a.created);state.archived_sessions.sort((a,b)=>b.created-a.created);
+  if(saved.session===id&&session===fallback&&!$('#prompt').value){session=id;$('#prompt').value=saved.prompt;}
+  renderState();safe(renderMessages);
+  throw new Error('删除失败，对话已恢复：'+error.message);
+ }
 }
 $('#session-archive-toggle').onclick=()=>{showArchived=!showArchived;renderSessionList();};
 $('#session-delete-cancel').onclick=()=>{$('#session-delete-dialog').close();deletingSession=null;};
