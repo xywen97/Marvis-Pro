@@ -5,7 +5,8 @@ import json
 import platform
 from datetime import datetime
 
-from marvis.team import team_instructions
+from marvis.team import AGENTS, AGENT_STRATEGIES, team_instructions
+from marvis.agent_protocol import REQUEST_SCHEMA, TASK_SCHEMA, RESULT_SCHEMA
 
 
 BASE_INSTRUCTIONS = """你是 MarvisXY，运行在用户本机上的个人助手。理解目标，使用真实可用的工具完成任务。
@@ -65,5 +66,33 @@ def build_system_prompt(settings, persona, tools, max_rounds):
             + json.dumps(context, ensure_ascii=False) + '\n' + mode
             + f'\n本任务最多 {max_rounds} 轮工具调用，随后仅汇总真实结果；优先处理用户核心目标。'
             + '\n</运行上下文>\n\n<团队职责>\n'
-            + '以下角色是同一个模型的工具分工，不是独立或并行运行的子 Agent。\n'
-            + team_instructions(names) + '\n</团队职责>')
+            + '各助手有独立的提示词、上下文和策略；所有协作经过主控，不允许助手互相直接调用。\n'
+            + team_instructions([t for a in AGENTS for t in a['tools'] if not (
+                settings['mode'] == 'local' and t in ('browser_read', 'browser_open', 'web_search'))]) + '\n</团队职责>\n'
+            + '你是主控 Agent。只调用已提供的主控工具；具体领域任务使用 agent_dispatch 交给对应助手。'
+            '只转交完成子任务所需的上下文，不能自动把整个用户聊天交给助手。'
+            '助手返回 needs_handoff 时审核 requests，明确目标后重新调度；返回协作请求不是完成任务。'
+            '结合 evidence 验证结果，拒绝、错误和截断不能视为成功。重复请求或预算耗尽时停止转接并解释。'
+            '\n统一请求 schema：' + json.dumps(REQUEST_SCHEMA, ensure_ascii=False)
+            + '\n统一返回 schema：' + json.dumps(RESULT_SCHEMA, ensure_ascii=False))
+
+
+def build_worker_prompt(agent_id, settings, tools, rounds):
+    agent = next(a for a in AGENTS if a['id'] == agent_id)
+    safety = BASE_INSTRUCTIONS.split('<权限与内容边界>')[1].split('</权限与内容边界>')[0]
+    return ('你是 MarvisXY 的独立助手：' + agent['name'] + '。只接受主控的统一任务协议。\n'
+            + agent['guidance'] + '\n专属策略：' + AGENT_STRATEGIES[agent_id]['strategy']
+            + '\n只调用本助手提供的工具。不能调用 agent_dispatch、其他助手工具或自行启动子 Agent。'
+            '需要其他助手时用 agent_report 返回 needs_handoff 和统一 requests，等待主控转接。'
+            '完成后必须调用 agent_report；报告基于真实工具证据，明确未完成事项。'
+            '纯文本回复不是协议报告；requests 不能以本助手为目标。'
+            '\n默认使用简体中文报告。先检查观察结果和分页，失败两次不要重复同工具同参数；审批拒绝后停止该动作。'
+            'has_more 使用 next_offset 或 next_start_line；scan_truncated 需缩小范围，extraction_limited 不能分页绕过。'
+            '长行和网页截断不能当成全文。检索摘要需要读取原文件或网页核实。'
+            '\n<共享权限规则>' + safety + '</共享权限规则>\n'
+            + json.dumps({'agent': agent_id, 'mode': settings['mode'], 'authorized_roots': settings['roots'],
+                          'available_tools': [t['function']['name'] for t in tools], 'max_tool_rounds': rounds,
+                          'local_time': datetime.now().astimezone().isoformat(timespec='seconds')}, ensure_ascii=False)
+            + '\n输入是主控任务和本助手自己的历史，不包含其他助手的私有上下文。'
+            '\n统一任务输入 schema：' + json.dumps(TASK_SCHEMA, ensure_ascii=False)
+            + '\n统一返回 schema：' + json.dumps(RESULT_SCHEMA, ensure_ascii=False))

@@ -59,10 +59,15 @@ class ProgressTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             runtime=Runtime(folder); snapshots=[];rounds=[]
             def chat(messages,on_delta=None,**kwargs):
+                names = {t['function']['name'] for t in kwargs['tools']}
+                if 'agent_report' in names:
+                    from agent_fixture import report_reply
+                    return report_reply('磁盘已检查')
                 if not rounds:
                     rounds.append(1);on_delta('先检查');on_delta('磁盘。')
                     snapshots.append(runtime.snapshot())
-                    return ChatResult.success('先检查磁盘。',tool_calls=[{'id':'call','type':'function','function':{'name':'system_info','arguments':'{"section":"disk"}'}}])
+                    from agent_fixture import dispatch_reply
+                    return dispatch_reply(text='先检查磁盘。')
                 on_delta('检查完成');snapshots.append(runtime.snapshot())
                 return ChatResult.success('检查完成')
             try:

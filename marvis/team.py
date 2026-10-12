@@ -1,6 +1,6 @@
 """Role contracts shared by orchestration, capability dispatch and clients.
 
-These are execution roles of one model, not fictitious independent conversations.
+Each specialist has an independent model context and a main-only bridge.
 """
 from __future__ import annotations
 import json
@@ -21,6 +21,13 @@ AGENTS = [
      'tools': ['knowledge_search', 'web_search'], 'guidance': '本机资料优先知识检索；未索引时交给文件管家；网络搜索结果交给浏览器读取验证，答案附来源。'},
 ]
 TOOL_AGENTS = {tool: agent['id'] for agent in AGENTS for tool in agent['tools']}
+AGENT_STRATEGIES = {
+    'file': {'rounds': 8, 'strategy': '先定位文件和核实原文，再执行修改；逐项检查分页、指纹、审批及实际输出。需要检索或其他能力时报告主控。'},
+    'computer': {'rounds': 4, 'strategy': '按任务选择指标，保留原始证据，区分测量和推断。只做诊断；需要保存报告时请求主控转交文件管家。'},
+    'app': {'rounds': 4, 'strategy': '先解析真实应用名，再申请启动。启动成功不代表应用内任务完成；需要其他操作时报告主控。'},
+    'browser': {'rounds': 6, 'strategy': '读取指定来源并验证正文，保留链接、标题和截断信息。需要发现来源时请求主控转交搜索助手。'},
+    'search': {'rounds': 6, 'strategy': '区分本地知识与网络来源；索引失效或正文核实时返回协作请求。搜索链接不代表已验证事实。'},
+}
 
 
 def team_instructions(tool_names=None):

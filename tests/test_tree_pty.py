@@ -26,7 +26,7 @@ class Model:
  def chat(self,messages,**kwargs):
   if messages[-1]['role']=='user':
    output.with_suffix('.context').write_text(json.dumps(messages,ensure_ascii=False))
-   return ChatResult.success('公开行动说明：先检查磁盘，再查看内存。',tool_calls=[{'id':'disk','type':'function','function':{'name':'system_info','arguments':'{"section":"disk"}'}},{'id':'memory','type':'function','function':{'name':'system_info','arguments':'{"section":"memory"}'}}])
+   return ChatResult.success('公开行动说明：先检查磁盘，再查看内存。',tool_calls=[{'id':'disk','type':'function','function':{'name':'agent_inspect','arguments':'{}'}},{'id':'memory','type':'function','function':{'name':'agent_inspect','arguments':'{}'}}])
   return ChatResult.success('检查完毕。')
 class UI(Terminal):
  def select_tree(self,node_id,summarize=False):
@@ -35,7 +35,7 @@ class UI(Terminal):
   output.write_text(json.dumps({'session':self.session,'input':self.input,'kind':path[-1]['kind'] if path else 'root','nodes':len(self.runtime.session_tree(self.session)['nodes'])},ensure_ascii=False))
 with tempfile.TemporaryDirectory() as directory:
  r=Runtime(directory,offline=True);r.offline=False;r.model=lambda settings:Model()
- Capabilities.execute=lambda self,name,args,*rest:{'section':args['section'],'demo':True}
+ Capabilities.execute=lambda self,name,args,*rest:{'demo':True}
  sid=r.new_session();task=r.submit('执行评估',sid)
  while task['id'] in r.cancels:time.sleep(.01)
  try:curses.wrapper(UI(r).run)

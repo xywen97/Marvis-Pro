@@ -17,7 +17,7 @@ async function runAppCommand(text){
  const result=await api('command',{text,session_id:session});session=result.session_id;
  if(result.view==='tree'){await openStepTree();return;}
  if(result.view==='trace'){document.body.classList.toggle('hide-traces');return;}
- if(result.view==='result'){const tools=[...$('#messages .tool-details')];const target=tools[Number(result.arguments[0]||tools.length)-1];if(!target)throw Error('当前对话没有对应工具结果。');target.open=!target.open;return;}
+ if(result.view==='result'){const tools=[...document.querySelectorAll('#messages .tool-details')];const target=tools[Number(result.arguments[0]||tools.length)-1];if(!target)throw Error('当前对话没有对应工具结果。');target.open=!target.open;if(target.open){const trace=target.closest('.trace-details');if(trace)trace.open=true;}return;}
  if(result.view==='quit'){window.close();toast('可使用窗口左上角关闭按钮退出 App。');return;}
  showPage(['chat','tasks','knowledge','workflows','settings'][result.page||0]);
  if(result.query!==undefined)$('#knowledge-query').value=result.query;

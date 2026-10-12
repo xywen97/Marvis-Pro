@@ -98,10 +98,11 @@ class SessionTreeTests(unittest.TestCase):
         def chat(messages, **kwargs):
             if messages[-1]['role']=='user':
                 return ChatResult.success('公开步骤说明：先检查，再整理。',tool_calls=[
-                    {'id':'first-call','type':'function','function':{'name':'system_info','arguments':'{"section":"disk"}'}},
-                    {'id':'second-call','type':'function','function':{'name':'system_info','arguments':'{"section":"memory"}'}}])
+                    {'id':'first-call','type':'function','function':{'name':'agent_inspect','arguments':'{}'}},
+                    {'id':'second-call','type':'function','function':{'name':'agent_inspect','arguments':'{}'}}])
             return ChatResult.success('未来最终回答，不应出现在较早节点的分支中。')
-        with patch.object(LLMClient,'configured',new_callable=lambda:property(lambda s:True)),patch.object(LLMClient,'chat',side_effect=chat),patch.object(Capabilities,'execute',side_effect=lambda name,args,*rest:{'marker':'disk-result' if args['section']=='disk' else 'future-memory-result'}):
+        markers=iter(['disk-result','future-memory-result'])
+        with patch.object(LLMClient,'configured',new_callable=lambda:property(lambda s:True)),patch.object(LLMClient,'chat',side_effect=chat),patch.object(Capabilities,'execute',side_effect=lambda name,args,*rest:{'marker':next(markers)}):
             self.turn('执行一次完整评估')
         return self.runtime.session_tree(self.sid)['nodes']
 

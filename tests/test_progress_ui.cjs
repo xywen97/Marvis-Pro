@@ -22,14 +22,20 @@ async function run(){
   assert(await saved.evaluate(node=>node===document.querySelector('#messages > .message.assistant')),'bubble DOM must survive updates');
   assert.equal(await thought.locator('.message-heading').textContent(),'MarvisXY');
   assert.equal(await page.locator('.chat-trace .message').count(),0,'model prose must stay outside execution traces');
-  const tools=page.locator('.agent-tool');await tools.first().waitFor();
+  const tools=page.locator('.agent-tool');await tools.first().waitFor({state:'attached'});
+  const traces=page.locator('.trace-details');assert.equal(await traces.first().getAttribute('open'),null);
+  await page.waitForFunction(()=>document.querySelector('.trace-preview')?.textContent.includes('system_info'));
+  const savedTrace=await traces.first().elementHandle();await traces.first().locator(':scope > summary').click();
   assert((await tools.first().textContent()).includes('生成调用'),'tool should appear while its arguments are generated');
   const details=tools.first().locator('details');assert.equal(await details.getAttribute('open'),null);
   await details.locator('summary').click();const savedDetails=await details.elementHandle();
   await page.waitForFunction(()=>document.querySelectorAll('.agent-tool').length===2);
-  await page.waitForFunction(()=>document.querySelector('.tool-payload')?.textContent.includes('返回结果'));
+  // The UI preserves details for either a successful call or an ownership rejection
+  // from the independent-agent coordinator (this fixture calls physical tools directly).
+  await page.waitForFunction(()=>/返回结果|错误/.test(document.querySelector('.tool-payload')?.textContent||''));
   assert(await savedDetails.evaluate(node=>node.isConnected&&node.open),'expanded result must stay open across streaming updates');
-  assert(await details.locator('pre').last().textContent().then(t=>t.includes('total_gb')));
+  assert(await savedTrace.evaluate(node=>node.isConnected&&node.open),'outer trace must preserve its expanded state');
+  assert(await details.locator('pre').last().textContent().then(t=>t.includes('total_gb')||t.includes('不能调用其他 Agent 的工具')));
   assert.equal(await tools.nth(1).locator('details').getAttribute('open'),null);
   const secondNote=page.locator('#messages > .message.assistant').nth(1);await secondNote.waitFor();
   const secondNoteNode=await secondNote.elementHandle();
@@ -42,6 +48,34 @@ async function run(){
   assert(new Set(responseSamples).size>=3,'final answer must stream directly in its own conversation bubble');
   assert(await responseNode.evaluate(node=>node===document.querySelectorAll('#messages > .message.assistant')[2]),'completion retains the streaming reply DOM');
   assert.equal(await page.locator('.agent-step').count(),2,'only tool-bearing steps belong in execution traces');
+  assert.equal(await traces.count(),2,'different execution blocks must stay separate');
+  assert.equal(await traces.nth(1).getAttribute('open'),null,'new blocks must default to collapsed independently');
+  await traces.nth(1).locator(':scope > summary').click();
+  await traces.first().locator(':scope > summary').click();
+  assert.equal(await traces.first().getAttribute('open'),null);
+  assert.notEqual(await traces.nth(1).getAttribute('open'),null);
+  const previewChecks=await page.evaluate(()=>{
+   const root=document.createElement('div');document.body.append(root);
+   const task={status:'running',events:[{id:1,kind:'model_start',content:{step:1}},{id:2,kind:'tool_start',content:{step:1,call_id:'a',tool:'agent_dispatch',arguments:{task:'检查😀'.repeat(40)}}}]};
+   AgentProgress.updateTrace(root,task);const detail=root.firstElementChild;
+   const truncated=root.querySelector('.trace-preview').textContent;
+   detail.open=true;
+   task.events.push({id:3,kind:'tool_result',content:{step:1,call_id:'a',result:{}}},{id:4,kind:'tool_start',content:{step:1,call_id:'b',tool:'agent_report',arguments:{id:'worker'}}});
+   AgentProgress.updateTrace(root,task);
+   const next=root.querySelector('.trace-preview').textContent;
+   const stable=root.firstElementChild===detail&&detail.open;
+   task.status='completed';AgentProgress.updateTrace(root,task);
+   const completed=root.querySelector('.trace-preview').textContent;
+   root.remove();return {truncated,next,stable,completed};
+  });
+  assert.equal(Array.from(previewChecks.truncated).length,50);assert(previewChecks.truncated.endsWith('...'));
+  assert.equal(previewChecks.next,'agent_report {"id":"worker"}');assert(previewChecks.stable);assert.equal(previewChecks.completed,'');
+  await page.evaluate(()=>{document.querySelector('.tool-details').open=false;});
+  await page.evaluate(()=>runAppCommand('/result 1'));
+  assert.notEqual(await traces.first().getAttribute('open'),null,'result command must expand its containing trace');
+  assert.notEqual(await details.getAttribute('open'),null);
+  await traces.first().locator(':scope > summary').focus();await page.keyboard.press('Enter');
+  assert.equal(await traces.first().getAttribute('open'),null,'native collapse must work from the keyboard');
   assert((await thought.textContent()).includes('随后整理检查结果。'));
   assert.equal(await page.locator('#messages > .message.assistant').count(),3);
   assert(await secondNoteNode.evaluate(node=>node===document.querySelectorAll('#messages > .message.assistant')[1]));
@@ -71,7 +105,7 @@ async function run(){
   await page.waitForSelector('#messages > .message.assistant');
   assert.equal(await page.locator('.chat-trace .message').count(),0);
   assert(await page.locator('#messages > .message.assistant').getByRole('button',{name:'分支到新聊天',exact:true}).isEnabled());
-  console.log(`Agent steps UI passed: ${new Set(samples).size} note frames; stable DOM; early tool-call rows; repeated tools grouped correctly; nested collapsed results; open state preserved.`);
+  console.log(`Agent steps UI passed: ${new Set(samples).size} note frames; independent default collapse; live tool/argument preview; 50 Unicode characters; stable expanded state; result command; keyboard toggle.`);
  } finally {if(browser)await browser.close();fixture.stdin.end();}
 }
 run().catch(error=>{console.error(error);process.exitCode=1});

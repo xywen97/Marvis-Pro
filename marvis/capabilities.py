@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from html.parser import HTMLParser
-from marvis.team import AGENTS, TOOL_AGENTS
+from marvis.team import AGENTS, AGENT_STRATEGIES, TOOL_AGENTS
 from marvis.file_tools import FileTools
 
 TEXT = {'.txt', '.md', '.py', '.js', '.ts', '.json', '.csv', '.html', '.css', '.yaml', '.yml', '.toml', '.log', '.rst',
@@ -579,6 +579,8 @@ class Capabilities(FileTools):
         dependencies = {ext: importlib.util.find_spec(module) is not None for ext, module in
                         [('pdf', 'pypdf'), ('docx', 'docx'), ('xlsx', 'openpyxl')]}
         return {'agents': AGENTS, 'mode': 'local' if self.local else 'efficiency',
+                'agent_architecture': {'independent_contexts': True, 'bridge': 'main', 'parallel': False,
+                                       'protocol_version': 1, 'strategies': AGENT_STRATEGIES},
                 'document_parsers': dependencies, 'ocr_installed': bool(shutil.which('tesseract')),
                 'macos': sys.platform == 'darwin', 'network_enabled': not self.local,
                 'roots': self.store.setting('roots', [str(Path.cwd())]),

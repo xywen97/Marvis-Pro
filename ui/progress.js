@@ -107,10 +107,24 @@ window.AgentProgress = (() => {
  }
  function updateTrace(root,task,groups=steps(task).filter(group=>group.tools.length||group.events.length)) {
   root.className='chat-trace agent-progress';
-  if(!root.firstElementChild)root.append(el('div','progress-heading'),el('div','progress-steps'));
-  root.firstElementChild.textContent=`${task.branch_cutoff?'历史截点':statuses[task.status]} · 执行过程`;
+  if(!root.firstElementChild){
+   const detail=el('details','trace-details'),heading=el('summary','progress-heading');
+   heading.append(el('span','trace-label'),el('span','trace-preview'));
+   detail.append(heading,el('div','progress-steps'));root.append(detail);
+   detail.addEventListener('toggle',()=>document.dispatchEvent(new Event('agent-content-resize')));
+  }
+  const detail=root.firstElementChild;
+  detail.querySelector('.trace-label').textContent=`${task.branch_cutoff?'历史截点':statuses[task.status]} · 执行过程`;
   const latest=steps(task).at(-1)?.step;
-  sync(root.lastElementChild,groups.map(group=>({
+  const activeTools=busy(task)?groups.flatMap(group=>group.tools):[];
+  const pending=activeTools.filter(tool=>!tool.result);
+  const current=pending.find(tool=>tool.start)||pending.at(-1);
+  const data=(current?.start||current?.stream)?.content;
+  const args=typeof data?.arguments==='string'?data.arguments:JSON.stringify(data?.arguments);
+  const preview=data?`${data.tool||'准备工具调用'}${args?' '+args:''}`.replace(/\s+/g,' ').trim():'';
+  const characters=Array.from(preview);
+  detail.querySelector('.trace-preview').textContent=characters.length>50?characters.slice(0,47).join('')+'...':preview;
+  sync(detail.lastElementChild,groups.map(group=>({
    key:'step-'+group.step,
    make:()=>{const node=el('section','agent-step');node.append(el('div','step-heading'),el('div','step-content'));return node;},
    update:node=>{

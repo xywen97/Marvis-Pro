@@ -9,6 +9,7 @@ from llm_client import ChatResult, LLMClient
 from marvis.capabilities import Capabilities, TOOLS, PageText, SearchResults, validate_arguments
 from marvis.runtime import Runtime
 from marvis.team import AGENTS, TOOL_AGENTS, tool_message
+from agent_fixture import dispatch_reply, report_reply
 
 
 class AgentContractsTests(unittest.TestCase):
@@ -60,7 +61,8 @@ class AgentContractsTests(unittest.TestCase):
                 self.assertEqual(context['user_title'], '同学')
                 self.assertEqual(context['max_tool_rounds'], 24)
                 self.assertEqual(context['mode'], mode)
-                self.assertIn('不是独立或并行运行的子 Agent', system)
+                self.assertIn('各助手有独立的提示词、上下文和策略', system)
+                self.assertEqual(offered, {'agent_inspect', 'agent_dispatch'})
                 self.assertEqual('browser_read' in system, mode == 'efficiency')
                 self.assertEqual('web_search' in system, mode == 'efficiency')
                 self.assertIn('确认成功前不能声称已执行', system)
@@ -91,9 +93,11 @@ class AgentContractsTests(unittest.TestCase):
         observed = []
         def respond(messages, **kwargs):
             results = [json.loads(m['content']) for m in messages if m['role'] == 'tool']
+            if 'agent_dispatch' in {t['function']['name'] for t in kwargs['tools']}:
+                return ChatResult.success('读取完成') if results else dispatch_reply('file', '完整读取笔记', str(p))
             if len(results) == 2:
                 observed.extend(results)
-                return ChatResult.success('读取完整内容：' + ''.join(r['text'] for r in results))
+                return report_reply('读取完整内容：' + ''.join(r['text'] for r in results))
             offset = results[-1]['next_offset'] if results else 0
             return ChatResult.success('', tool_calls=[{'id': 'page-' + str(offset), 'function': {
                 'name': 'file_read', 'arguments': json.dumps({'path': str(p), 'offset': offset, 'limit': 2})}}])
@@ -269,7 +273,7 @@ class AgentContractsTests(unittest.TestCase):
     def test_rejected_tool_cannot_reprompt_with_changed_arguments(self):
         self.runtime.offline = False
         calls = [{'id': 'same', 'type': 'function', 'function': {'name': 'file_write', 'arguments': json.dumps({'path': str(self.work/f'{i}.txt'), 'text': 'value'})}} for i in range(2)]
-        replies = [ChatResult.success('', tool_calls=calls), ChatResult.success('已停止')]
+        replies = [dispatch_reply('file', '创建两份笔记'), ChatResult.success('', tool_calls=calls), report_reply('已停止', 'partial'), ChatResult.success('已停止')]
         with patch.object(LLMClient, 'configured', new_callable=lambda: property(lambda s: True)), patch.object(LLMClient, 'chat', side_effect=replies) as model:
             task = self.runtime.submit('帮忙创建两份笔记')
             self.wait(task, ('waiting_approval',)); self.runtime.approve(task['id'], False)
@@ -280,11 +284,11 @@ class AgentContractsTests(unittest.TestCase):
         self.assertEqual(list(self.work.iterdir()), [])
         sent = model.call_args.args[0]
         ids = [m['tool_call_id'] for m in sent if m['role'] == 'tool']
-        self.assertEqual(len(set(ids)), 2)
+        self.assertEqual(len(set(ids)), 1)  # Main receives the dispatch envelope, not private file calls.
 
     def test_repeated_failures_stop_executing_and_local_tools_filtered(self):
         self.runtime.offline = False; self.runtime.update_settings({'mode': 'local'})
-        replies = [ChatResult.success('', tool_calls=[{'id': str(i), 'function': {'name': 'system_info', 'arguments': '{"section":"disk"}'}}]) for i in range(3)] + [ChatResult.success('失败原因')]
+        replies = [ChatResult.success('', tool_calls=[{'id': str(i), 'function': {'name': 'agent_inspect', 'arguments': '{}'}}]) for i in range(3)] + [ChatResult.success('失败原因')]
         with patch.object(LLMClient, 'chat', side_effect=replies) as model, patch.object(Capabilities, 'execute', side_effect=ValueError('test failure')) as execute:
             task = self.runtime.submit('帮忙评估电脑健康')
             self.assertEqual(self.wait(task)['status'], 'completed'); self.assertEqual(execute.call_count, 2)
@@ -294,7 +298,7 @@ class AgentContractsTests(unittest.TestCase):
 
     def test_execution_budget_does_not_execute_final_provider_calls(self):
         self.runtime.offline = False; self.runtime.config['orchestration'] = {'max_rounds': 1}
-        result = ChatResult.success('', tool_calls=[{'id': 'c', 'function': {'name': 'system_info', 'arguments': '{}'}}])
+        result = ChatResult.success('', tool_calls=[{'id': 'c', 'function': {'name': 'agent_inspect', 'arguments': '{}'}}])
         with patch.object(LLMClient, 'configured', new_callable=lambda: property(lambda s: True)), patch.object(LLMClient, 'chat', return_value=result), patch.object(Capabilities, 'execute', return_value={'ok': True}) as execute:
             task = self.runtime.submit('帮忙全面评估电脑')
             self.assertEqual(self.wait(task)['status'], 'failed'); self.assertEqual(execute.call_count, 1)

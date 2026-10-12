@@ -7,6 +7,7 @@ from unittest.mock import patch
 from marvis.runtime import Runtime
 from marvis.capabilities import Capabilities
 from llm_client import ChatResult, LLMClient
+from agent_fixture import dispatch_reply, report_reply
 
 
 class RuntimeTests(unittest.TestCase):
@@ -112,7 +113,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_model_multitool_loop_and_history(self):
         self.runtime.offline = False
-        replies = [ChatResult.success('', tool_calls=[{'id':'call_1','type':'function','function':{'name':'system_info','arguments':'{"section":"disk"}'}}]), ChatResult.success('磁盘已检查')]
+        replies = [dispatch_reply(), ChatResult.success('', tool_calls=[{'id':'call_1','type':'function','function':{'name':'system_info','arguments':'{"section":"disk"}'}}]), report_reply('磁盘已检查'), ChatResult.success('磁盘已检查')]
         with patch.object(LLMClient, 'configured', new_callable=lambda: property(lambda s: True)), patch.object(LLMClient, 'chat', side_effect=replies) as chat:
             task = self.runtime.submit('请评估我的电脑健康状况')
             self.assertEqual(self.wait(task)['result'], '磁盘已检查')

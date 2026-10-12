@@ -11,7 +11,6 @@ from llm_client import LLMClient
 from marvis.store import Store, uid
 from marvis.capabilities import Capabilities, TOOLS, MUTATIONS, validate_arguments
 from marvis.team import AGENTS, TOOL_AGENTS, tool_message
-from marvis.prompts import build_system_prompt
 
 
 class Cancelled(Exception): pass
@@ -169,6 +168,7 @@ class Runtime:
             pending.clear()
         for node in path:
             data = node['data']; kind = node['kind']
+            if kind == 'agent_context' or data.get('scope') == 'worker': continue
             if kind != 'tool_result': close_pending()
             if kind in ('user','assistant','thinking'):
                 messages.append({'role':'user' if kind=='user' else 'assistant','content':node['content']})
@@ -348,10 +348,11 @@ class Runtime:
     def _check(self, ident):
         if self.closed.is_set() or self.cancels[ident].is_set(): raise Cancelled('任务已停止。')
 
-    def _tool(self, ident, caps, name, args, step=0, call_id=None):
+    def _tool(self, ident, caps, name, args, step=0, call_id=None, scope=None, request_id=None):
         self._check(ident)
         group = TOOL_AGENTS.get(name, 'main') if isinstance(name, str) else 'main'
         context = {'step': step, 'call_id': call_id or uid()}
+        if scope: context.update(scope=scope, request_id=request_id)
         self.store.event(ident, 'tool_start', {'agent': group, 'tool': name, 'arguments': args, **context})
         started = time.monotonic()
         try:
@@ -425,7 +426,9 @@ class Runtime:
             self._check(ident); self.status(ident, 'running')
             self.store.event(ident, 'planning', {'agent': 'main', 'text': '理解目标并选择工具'})
             caps = Capabilities(self.store, lambda: self._check(ident), settings['mode'] == 'local')
-            direct = action or self.direct(prompt, settings['roots'])
+            # Explicit tools and offline shortcuts stay deterministic. Online
+            # natural-language tasks go through the independent main/worker loop.
+            direct = action or (self.direct(prompt, settings['roots']) if self.offline or prompt.startswith('/tool ') else None)
             if direct:
                 result = self._tool(ident, caps, direct['tool'], direct.get('arguments', {}))
                 reply = self.format_result(result)
@@ -495,13 +498,13 @@ class Runtime:
             raise ValueError('当前任务证据超过上下文预算，请拆分任务或从近期执行节点继续。')
         return projected
 
-    def _model_turn(self, ident, client, messages, step, tool_choice='auto', tools=None):
-        self.store.event(ident, 'model_start', {'text': '正在生成处理方案与回复', 'step': step, 'model': client.model})
+    def _model_turn(self, ident, client, messages, step, tool_choice='auto', tools=None, agent='main', request_id=None):
+        self.store.event(ident, 'model_start', {'text': '正在生成处理方案与回复', 'step': step, 'model': client.model, 'agent': agent, 'request_id': request_id})
         parts = []; event_id = None; last_flush = 0.0
         tool_events = {}; tool_parts = {}
         def tool_delta(index, call):
             self._check(ident)
-            data = {'step': step, 'index': index, 'call_id': call['id'], 'tool': call['function']['name'], 'arguments': call['function']['arguments']}
+            data = {'step': step, 'index': index, 'call_id': call['id'], 'tool': call['function']['name'], 'arguments': call['function']['arguments'], 'agent': agent, 'request_id': request_id}
             tool_parts[index] = data
             now = time.monotonic()
             previous = tool_events.get(index)
@@ -515,8 +518,8 @@ class Runtime:
             nonlocal event_id, last_flush
             now = time.monotonic()
             if not parts or (event_id is not None and not force and now - last_flush < .1): return
-            data = {'text': ''.join(parts), 'step': step}
-            if event_id is None: event_id = self.store.event(ident, 'assistant_stream', data)
+            data = {'text': ''.join(parts), 'step': step, 'agent': agent, 'request_id': request_id}
+            if event_id is None: event_id = self.store.event(ident, 'assistant_stream' if agent == 'main' else 'agent_stream', data)
             else:
                 self.store.execute('UPDATE events SET content=? WHERE id=?', (json.dumps(data, ensure_ascii=False), event_id))
                 self.status(ident, 'running')
@@ -533,7 +536,7 @@ class Runtime:
         if result.ok and result.content and not parts:
             self.store.event(ident, 'stream_fallback', {'text': '模型服务返回了完整响应，本轮未提供分段输出。'})
             parts.append(result.content); flush(True)
-        if result.ok and result.tool_calls and event_id:
+        if agent == 'main' and result.ok and result.tool_calls and event_id:
             self.store.execute("UPDATE events SET kind='assistant_note' WHERE id=?", (event_id,))
             self.store.record_event_entry(ident,event_id,'assistant_note',{'text':result.content,'step':step})
             self.status(ident, 'running')
@@ -543,57 +546,8 @@ class Runtime:
         if self.offline: return '离线运行：可使用文件、知识库和系统工具。复杂自然语言任务需要配置模型并关闭 --offline。'
         client = self.model(settings)
         if not client.configured: return '模型尚未配置。请在设置中填写模型端点和名称，API Key 放在 .env。文件与系统工具无需模型即可运行。'
-        options = self.config.get('orchestration') or {}
-        rounds = max(1, min(24, int(options.get('max_rounds', 8))))
-        available_tools = [t for t in TOOLS if not (settings['mode'] == 'local' and t['function']['name'] in ('browser_read', 'browser_open', 'web_search'))]
-        system = build_system_prompt(settings, self.config.get('persona') or {}, available_tools, rounds)
-        messages = [{'role': 'system', 'content': system}] + self.context_messages(session_id, ident)
-        failures = {}; calls_seen = set()
-        for step in range(rounds):
-            self._check(ident)
-            result = self._model_turn(ident, client, messages, step + 1, tools=available_tools)
-            self._check(ident)
-            if not result.ok: raise ValueError('模型调用失败：' + result.error)
-            if not result.tool_calls:
-                if not result.content.strip(): raise ValueError('模型返回空响应，请重试。')
-                return result.content.strip()
-            if len(result.tool_calls) > 12: raise ValueError('模型单次工具请求超过限制。')
-            normalized = []
-            for tc in result.tool_calls:
-                if not isinstance(tc, dict) or not isinstance(tc.get('function'), dict): raise ValueError('模型返回无效工具调用结构。')
-                tc = {**tc, 'function': dict(tc['function']), 'type': 'function'}
-                if not isinstance(tc.get('id'), str) or not tc['id'] or tc['id'] in calls_seen: tc['id'] = uid()
-                calls_seen.add(tc['id']); normalized.append(tc)
-            result.tool_calls = normalized
-            messages.append({'role': 'assistant', 'content': result.content, 'tool_calls': result.tool_calls})
-            for tc in result.tool_calls:
-                fn = tc.get('function', {})
-                started_call = False
-                signature = None
-                try:
-                    args = json.loads(fn.get('arguments') or '{}')
-                    if not isinstance(args, dict): raise ValueError('工具参数必须为对象。')
-                    signature = json.dumps([fn.get('name', ''), args], sort_keys=True, ensure_ascii=False)
-                    if failures.get(signature, 0) >= 2: raise ValueError('相同参数已失败两次，停止重复执行；请调整参数或解释失败原因。')
-                    started_call = True
-                    out = self._tool(ident, caps, fn.get('name', ''), args, step=step + 1, call_id=tc['id'])
-                    failures.pop(signature, None)
-                except Cancelled: raise
-                except Exception as e:
-                    out = {'error': str(e)}
-                    if signature: failures[signature] = failures.get(signature, 0) + 1
-                    if not started_call:
-                        metadata = {'tool':fn.get('name',''),'call_id':tc['id'],'step':step+1}
-                        self.store.event(ident,'tool_start',{**metadata,'arguments':fn.get('arguments',''),'agent':'main'})
-                        self.store.event(ident,'tool_error',{**metadata,'text':str(e),'elapsed_ms':0})
-                messages.append({'role': 'tool', 'tool_call_id': tc['id'], 'content': tool_message(out)})
-        self.store.event(ident, 'execution_limit', {'agent': 'main', 'text': '达到工具轮次上限，汇总已完成工作与未完成事项。'})
-        messages.append({'role': 'system', 'content': '工具执行预算已用完。根据真实结果汇总已完成与未完成事项，不能继续调用工具，也不能声称任务全部完成。'})
-        final = self._model_turn(ident, client, messages, rounds + 1, tool_choice='none', tools=available_tools)
-        self._check(ident)
-        if not final.ok: raise ValueError(final.error)
-        if final.tool_calls: raise ValueError('模型在执行预算用完后仍返回工具调用，未执行这些操作。')
-        return final.content.strip() or '已达到执行步数上限，请查看执行记录。'
+        from marvis.coordinator import Coordinator
+        return Coordinator(self, ident, session_id, caps, settings).run()
 
     @staticmethod
     def format_result(result):
