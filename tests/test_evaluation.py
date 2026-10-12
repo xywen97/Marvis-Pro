@@ -30,6 +30,7 @@ class DeepEvalIntegrationTests(unittest.TestCase):
         def respond(messages, **kwargs):
             if '这是失败后的状态说明' in messages[0]['content']:
                 self.assertEqual(kwargs['tool_choice'], 'none')
+                if callable(failure_response): return failure_response(messages, **kwargs)
                 return ChatResult.success(failure_response) if failure_response else ChatResult.failure('汇总模型不可用')
             return original(messages, **kwargs)
         with patch.object(LLMClient, 'configured', new_callable=lambda: property(lambda s: True)), \
@@ -104,6 +105,80 @@ class DeepEvalIntegrationTests(unittest.TestCase):
     def test_invalid_judge_json_fails_closed(self):
         row, events = self.run_task(lambda m, **kw: ChatResult.success('not JSON' if not kw['tools'] else '未评测成果'))
         self.assertEqual(row['status'], 'failed'); self.assertIn('未放行', row['result'])
+        self.assertFalse(any(e['kind'] == 'delivery_accepted' for e in events))
+
+    def test_missing_score_is_corrected_with_schema_feedback(self):
+        calls = 0
+        def respond(messages, **kwargs):
+            nonlocal calls
+            if kwargs['tools']: return ChatResult.success('完整交付')
+            calls += 1
+            if calls % 3 != 0: return ChatResult.success('{"reason":"只返回理由"}')
+            self.assertIn('validation_error', messages[-1]['content'])
+            self.assertIn('score', messages[-1]['content'])
+            self.assertIn('只返回理由', messages[-1]['content'])
+            return ChatResult.success('{"score":10,"reason":"任务与证据一致"}')
+        row, events = self.run_task(respond)
+        self.assertEqual(row['status'], 'completed', row['result'])
+        self.assertEqual(calls, 9)
+        receipt = next(e['content'] for e in events if e['kind'] == 'delivery_evaluation')
+        self.assertEqual(receipt['judge_calls'], 9)
+        self.assertTrue(all(m['threshold'] == .8 for m in receipt['metrics']))
+        self.assertTrue(any(e['kind'] == 'delivery_accepted' for e in events))
+
+    def test_persistently_missing_score_exhausts_retries_without_release(self):
+        calls = 0
+        def respond(messages, **kwargs):
+            nonlocal calls
+            if kwargs['tools']: return ChatResult.success('候选结果')
+            calls += 1
+            return ChatResult.success('{"reason":"没有分数"}')
+        row, events = self.run_task(respond)
+        self.assertEqual(calls, 3)
+        self.assertEqual(row['status'], 'failed')
+        self.assertIn('重试两次后仍无效', row['result'])
+        self.assertFalse(any(e['kind'] == 'delivery_accepted' for e in events))
+
+    def test_corrected_low_score_still_blocks_delivery(self):
+        self.runtime.config['evaluation'] = {'max_repairs': 0}
+        calls = 0
+        def respond(messages, **kwargs):
+            nonlocal calls
+            if kwargs['tools']: return ChatResult.success('未完成候选')
+            calls += 1
+            return ChatResult.success('{"reason":"缺少成果"}' if calls == 1 else '{"score":2,"reason":"缺少成果"}')
+        row, events = self.run_task(respond)
+        self.assertEqual(row['status'], 'failed')
+        receipt = next(e['content'] for e in events if e['kind'] == 'delivery_evaluation')
+        self.assertFalse(receipt['passed'])
+        self.assertTrue(all(m['threshold'] == .8 for m in receipt['metrics']))
+        self.assertFalse(any(e['kind'] == 'delivery_accepted' for e in events))
+
+    def test_failure_summary_receives_key_evidence_despite_large_worker_output(self):
+        self.runtime.config['evaluation'] = {'python': '/nonexistent/python'}
+        main_calls = 0; worker_calls = 0; summaries = []
+        def respond(messages, **kwargs):
+            nonlocal main_calls, worker_calls
+            names = {t['function']['name'] for t in kwargs['tools']}
+            if 'agent_dispatch' in names:
+                main_calls += 1
+                return dispatch_reply('computer', '检查状态') if main_calls == 1 else ChatResult.success('候选')
+            worker_calls += 1
+            return tool_reply('system_info', {}) if worker_calls == 1 else report_reply('状态检查完成；系统版本尚未验证')
+        def summarize(messages, **kwargs):
+            evidence = json.loads(messages[-1]['content']); summaries.append(evidence)
+            self.assertEqual(evidence['reports']['computer']['status'], 'completed')
+            self.assertIn('尚未验证', evidence['reports']['computer']['summary'])
+            record = evidence['tool_records'][0]
+            self.assertEqual(record['tool'], 'system_info')
+            self.assertIn({'field': 'path', 'value': '/tmp/verified.txt'}, record['facts'])
+            self.assertLessEqual(len(messages[-1]['content']), 18000)
+            return ChatResult.success('电脑检查完成，版本未验证；评测环境不可用。')
+        with patch('marvis.capabilities.Capabilities.system', return_value={'log': 'x' * 100000, 'path': '/tmp/verified.txt'}):
+            row, events = self.run_task(respond, failure_response=summarize)
+        self.assertEqual(row['status'], 'failed', row['result'])
+        self.assertEqual(len(summaries), 1)
+        self.assertIn('电脑检查完成，版本未验证；评测环境不可用。', row['result'])
         self.assertFalse(any(e['kind'] == 'delivery_accepted' for e in events))
 
     def test_retry_cap_does_not_deliver_failed_candidate(self):

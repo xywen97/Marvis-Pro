@@ -8,6 +8,7 @@ from marvis.prompts import build_system_prompt, build_worker_prompt
 from marvis.store import uid
 from marvis.team import TOOL_AGENTS, AGENT_STRATEGIES, agent_tool_names, tool_message
 from marvis.evaluation import enabled, measure, digest, evidence_snapshot
+from marvis.failure_evidence import failure_evidence, failed_record
 
 
 class Coordinator:
@@ -215,13 +216,21 @@ class Coordinator:
         events = self.runtime.store.events(self.ident)
         physical = [e for e in events if e['kind'] in ('tool_result', 'tool_error', 'rejected')
                     and e['content'].get('tool') not in ('agent_dispatch', 'delivery_evaluate')]
-        tool_failures = [e['content'] for e in physical if e['kind'] == 'tool_error' or
-                         (isinstance(e['content'].get('result'), dict) and e['content']['result'].get('error'))]
+        tool_failures = [e['content'] for e in physical if failed_record(e)]
         facts = '\n'.join(rows) or f'已有 {len(physical)} 条工具执行记录，其中 {len(tool_failures)} 条返回错误；尚无领域助手完成报告。'
         task = self.runtime.store.one('SELECT prompt FROM tasks WHERE id=?', (self.ident,))
         header = '交付未放行：' + str(error)
         summary = facts
         try:
+            evidence = failure_evidence(task['prompt'], str(error), latest, physical)
+            compact = json.loads(evidence)
+            summary = '\n'.join(f"- {names.get(actor, actor)}（{r['status']}）：{r['summary']}"
+                                for actor, r in compact['reports'].items()) or facts
+            if compact['tool_records']:
+                summary += '\n关键执行证据：\n' + '\n'.join(
+                    f"- {r['tool']}（{r['kind']}）：" + json.dumps(r['facts'], ensure_ascii=False)
+                    + '；' + r['excerpt'] for r in compact['tool_records'])
+            summary += '\n' + compact['notice']
             client = self.runtime.model(self.settings)
             if not client.configured: raise ValueError('模型尚未配置，使用执行器汇总。')
             client.timeout = min(getattr(client, 'timeout', 30), 30)
@@ -230,7 +239,7 @@ class Coordinator:
                 '你是主控。当前任务因执行或评测问题停止。只用给定执行证据汇总各助手已完成、失败和未验证部分，'
                 '说明下一步。不能宣称评测通过、不能交付未获放行的成果、不能调用工具。'
                 '这是失败后的状态说明，不是再次提交成果。'},
-                {'role': 'user', 'content': tool_message({'task': task['prompt'], 'failure': str(error), 'reports': latest, 'tool_errors': tool_failures}, 18000)}],
+                {'role': 'user', 'content': evidence}],
                 tools, 'main', final=True, status_summary=True)
             if result.ok and not result.tool_calls and result.content.strip(): summary = result.content.strip()
         except Exception:

@@ -21,6 +21,8 @@ async function run(){
     'context-qa':{main:{estimated_tokens:128000,window_tokens:256000,trigger_tokens:256000},
      file:{estimated_tokens:245760,window_tokens:256000},context:{estimated_tokens:30000,window_tokens:1000000}},
     'other-qa':{main:{estimated_tokens:25600,window_tokens:256000}}};
+   snapshot.tasks=[{id:'background-task',session_id:'other-qa',status:'running',created:Date.now()/1000,
+    updated:Date.now()/1000,events:[{id:1,kind:'model_start',content:{agent:'main'}}]}];
    MarvisTeam.render(snapshot);
    const track=document.querySelector('.team-main .context-track');
    const first={main:track.getAttribute('aria-valuenow'),file:document.querySelector('.team-file .context-meter').dataset.pressure,
@@ -31,12 +33,17 @@ async function run(){
    const overflow={value:track.getAttribute('aria-valuenow'),text:track.getAttribute('aria-valuetext')};
    session='other-qa';MarvisTeam.render(snapshot);
    const switched={main:track.getAttribute('aria-valuenow'),file:document.querySelector('.team-file .context-value').textContent};
-   session=originalSession;MarvisTeam.render(state);return {first,compacted,overflow,switched};
+   session='new-qa';MarvisTeam.render(snapshot);
+   const empty={main:document.querySelector('.team-main .context-value').textContent,
+    active:document.querySelectorAll('.team-agent:not([data-mode=idle])').length,
+    status:document.querySelector('#team-execution').textContent};
+   session=originalSession;MarvisTeam.render(state);return {first,compacted,overflow,switched,empty};
   });
   assert.equal(meters.first.main,'50.0');assert.equal(meters.first.file,'high');assert.equal(meters.first.context,'30k / 1M · 3.0%');
   assert.equal(meters.compacted.value,'3.9');assert(meters.compacted.stable);
   assert.equal(meters.overflow.value,'100.0');assert(meters.overflow.text.includes('117.2%'));
   assert.equal(meters.switched.main,'10.0');assert.equal(meters.switched.file,'未采样 / 256k');
+  assert.deepEqual(meters.empty,{main:'未采样 / 256k',active:0,status:'团队待命'});
   const main=await page.locator('.team-main').elementHandle();
   assert.equal(await page.locator('.team-main .team-character').evaluate(n=>getComputedStyle(n).animationName),'team-idle');
   await page.evaluate(()=>{
@@ -53,6 +60,16 @@ async function run(){
   assert.notEqual(await page.locator('.team-computer .team-character').evaluate(n=>getComputedStyle(n).transform),first);
   await page.waitForFunction(()=>Number(document.querySelector('.team-computer .context-track').getAttribute('aria-valuenow'))>0);
   assert(Number(await page.locator('.team-main .context-track').getAttribute('aria-valuenow'))>0);
+  const runningSession=await page.evaluate(()=>session);
+  await page.locator('#new-chat').click();await page.waitForFunction(old=>session!==old,runningSession);
+  await page.waitForFunction(()=>document.querySelectorAll('.team-agent[data-mode=idle]').length===9);
+  assert.equal(await page.locator('.context-value').filter({hasText:'未采样 / 256k'}).count(),9);
+  assert.equal(await page.locator('#team-execution').textContent(),'团队待命');
+  assert(await page.evaluate(sid=>state.tasks.some(t=>t.session_id===sid&&t.status==='running'),runningSession));
+  await page.waitForTimeout(600);
+  assert.equal(await page.locator('.team-main .context-value').textContent(),'未采样 / 256k','background updates must not replace draft context');
+  await page.locator(`.session-entry[data-session="${runningSession}"] .session`).click();
+  await page.waitForFunction(()=>Number(document.querySelector('.team-main .context-track').getAttribute('aria-valuenow'))>0);
   await page.screenshot({path:process.env.MARVIS_TEAM_SCREENSHOT_PATH||path.join(__dirname,'../docs/screenshots/team.png')});
   await page.waitForFunction(()=>document.querySelector('.team-main').dataset.mode==='done');
   assert.equal(await page.locator('.team-computer').getAttribute('data-mode'),'done');
@@ -78,7 +95,7 @@ async function run(){
   assert.equal(await page.locator('.team-main .team-character').evaluate(n=>getComputedStyle(n).animationPlayState),'paused');
   assert.equal(await page.locator('.team-transfer.visible').count(),0);
   assert.deepEqual(errors,[]);
-  console.log('Team UI passed: idle, live thinking/tool execution, handoffs in both directions, completion, stable streaming DOM, no history replay, reduced motion, hidden pause.');
+  console.log('Team UI passed: session-scoped context/activity, new draft during background execution, restored readings, live handoffs, completion, stable DOM, reduced motion.');
  }finally{if(browser)await browser.close();fixture.stdin.end();}
 }
 run().catch(error=>{console.error(error);process.exitCode=1});

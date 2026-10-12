@@ -8,7 +8,7 @@ window.MarvisTeam = (() => {
  <path d="m26 34 2 2 2-2" class="team-mouth"/></g>
  <g class="team-check"><circle cx="44" cy="13" r="9"/><path d="m40 13 3 3 5-6"/></g></svg>`;
  let initialized=false, owner='main', currentId=null, flight=null, queue=[], reduced=matchMedia('(prefers-reduced-motion: reduce)');
- const seen=new Map();let seeded=false;
+ const seen=new Map();let seeded=false, renderedSession;
  function init(snapshot){
   if(initialized)return;initialized=true;const box=$('#agents');$('.team-heading span').textContent=snapshot.agents.length;box.classList.add('animated-team');
   for(const agent of snapshot.agents){
@@ -21,7 +21,7 @@ window.MarvisTeam = (() => {
    const track=el('div','context-track');track.setAttribute('role','progressbar');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');
    track.append(el('span','context-fill'));meter.append(caption,track);info.append(meter);
    row.append(art,info,el('span','agent-status','待命'));row.onclick=()=>{
-    const task=state.tasks.find(t=>['running','waiting_approval'].includes(t.status));
+    const task=state.tasks.find(t=>t.session_id===session&&['running','waiting_approval'].includes(t.status));
     if(task)safe(async()=>{session=task.session_id;showPage('chat');await renderMessages();});else showPage('office');
    };box.append(row);
   }
@@ -107,7 +107,14 @@ window.MarvisTeam = (() => {
   meter.title=`${reading?'最近采样的上下文占用（估算）':'当前对话尚无模型用量采样'}\n${used.toLocaleString()} / ${capacity.toLocaleString()} tokens\n摘要触发值：${trigger.toLocaleString()} tokens\n模型：${reading?.model||snapshot.context_policy?.model||'当前模型'}`;
  }
  function render(snapshot){
-  if(!snapshot)return;init(snapshot);collect(snapshot);
+  if(!snapshot)return;
+  // The chat sidebar belongs to the selected session, including an empty draft.
+  // Background tasks remain visible in the session list and task center.
+  snapshot={...snapshot,tasks:snapshot.tasks.filter(t=>t.session_id===session)};
+  if(renderedSession!==session){
+   stop();seen.clear();seeded=false;owner='main';currentId=null;renderedSession=session;
+  }
+  init(snapshot);collect(snapshot);
   const modes=MarvisOffice.activity(snapshot);
   if(modes.main.mode==='done'){
    for(const event of modes.main.task.events){
@@ -115,13 +122,11 @@ window.MarvisTeam = (() => {
    }
   }
   if(Object.entries(modes).some(([id,item])=>id!=='main'&&['working','thinking'].includes(item.mode))&&modes.main.mode==='thinking')modes.main={...modes.main,mode:'coordinating'};
-  const activeTask=snapshot.tasks.find(t=>['running','waiting_approval'].includes(t.status));
-  const usageSession=activeTask?.session_id||session;
   for(const row of document.querySelectorAll('.team-agent')){
    const item=modes[row.dataset.agent];if(row.dataset.mode!==item.mode)row.dataset.mode=item.mode;
    row.querySelector('.agent-status').textContent=labels[item.mode];
    row.setAttribute('aria-label',snapshot.agents.find(a=>a.id===row.dataset.agent).name+' · '+labels[item.mode]);
-   updateContext(row,snapshot,usageSession);
+   updateContext(row,snapshot,session);
   }
   const task=snapshot.tasks.find(t=>['running','waiting_approval'].includes(t.status));
   const selected=task&&snapshot.agents.find(a=>a.id===owner);

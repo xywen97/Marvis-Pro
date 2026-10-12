@@ -110,6 +110,7 @@ function messageSpec(key,message,{streaming=false,note=false,displayText=message
 }
 async function renderMessages() {
  updateComposer();
+ if(state)MarvisTeam.render(state);
  const currentSession=session, version=++messageVersion;
  const messages=session?await api('messages?session='+encodeURIComponent(session)):[];
  if(version!==messageVersion||session!==currentSession)return;

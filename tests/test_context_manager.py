@@ -250,6 +250,37 @@ class ContextManagerTests(unittest.TestCase):
         checkpoints = [n for n in self.runtime.store.entry_branch(self.sid) if n['kind']=='context_compaction']
         self.assertEqual(checkpoints[0]['data']['agent'], 'file')
 
+    def test_new_session_does_not_inherit_running_session_usage_or_model_history(self):
+        self.runtime.store.execute("UPDATE tasks SET status='running' WHERE id=?", (self.ident,))
+        self.runtime.store.event(self.ident, 'agent_context', {'agent': 'file', 'messages': [
+            {'role': 'assistant', 'content': 'OTHER_SESSION_PRIVATE_HISTORY'}]})
+        self.prepare(self.messages())
+        self.assertIn(self.sid, self.runtime.snapshot()['context_usage'])
+        sid = self.runtime.new_session(self.sid)
+        self.assertNotEqual(sid, self.sid)
+        self.assertEqual(self.runtime.context_messages(sid), [])
+        self.assertNotIn(sid, self.runtime.snapshot()['context_usage'])
+        ident = uid()
+        self.runtime.store.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?,?)',
+            (ident, sid, 'new input', 'running', '', time.time(), time.time()))
+        self.runtime.cancels[ident] = threading.Event()
+        self.runtime.store.add_message(sid, 'user', 'new input', ident)
+        self.assertEqual(self.runtime.context_messages(sid), [{'role': 'user', 'content': 'new input'}])
+        self.config['context_management']['window_tokens'] = 256000
+        self.client.chat.reset_mock()
+        self.client.chat.return_value = report_reply('new session worker finished')
+        coordinator = Coordinator(self.runtime, ident, sid, Capabilities(self.runtime.store), self.runtime.settings())
+        with patch.object(self.runtime, 'model', return_value=self.client):
+            report = coordinator.dispatch({'agent': 'file', 'objective': 'new session task', 'context': ''})
+        self.assertEqual(report['status'], 'completed', report['summary'])
+        sent = json.dumps(self.client.chat.call_args.args[0], ensure_ascii=False)
+        self.assertNotIn('OTHER_SESSION_PRIVATE_HISTORY', sent)
+        self.assertNotIn(SUMMARY, sent)
+        self.assertIn('new session task', sent)
+        readings = self.runtime.snapshot()['context_usage'][sid]
+        self.assertNotIn('main', readings)
+        self.assertNotIn('context', readings)
+
     def test_worker_dispatch_restores_compacted_history_without_other_agent_memory(self):
         self.config['context_management']['window_tokens'] = 16000
         self.runtime.store.event(self.ident, 'agent_context', {'agent': 'file', 'messages': [
