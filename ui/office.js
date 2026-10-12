@@ -21,12 +21,7 @@ window.MarvisOffice = (() => {
   <ellipse cx="450" cy="340" rx="134" ry="88" fill="url(#office-command-glow)"/>
   <ellipse cx="450" cy="354" rx="78" ry="47" fill="#e9efff" stroke="#a6bbef"/>
   <ellipse cx="450" cy="354" rx="67" ry="39" fill="none" stroke="#bdccf1"/>
-  <g fill="#c2d0e4" stroke="#f7faff" stroke-width="2">
-   <path d="M423 189h54l-4 14h-46z"/><path d="m624 225 35 22-13 10-33-21z"/>
-   <path d="m682 320 14 32-17 4-12-32z"/><path d="m627 428 32-21 12 11-35 23z"/>
-   <path d="M423 477h54l-4 14h-46z"/><path d="m228 418 12-11 33 21-10 13z"/>
-   <path d="m203 352 14-32 16 4-12 32z"/><path d="m242 247 35-22 13 11-34 21z"/>
-  </g>
+  <g class="office-seat-indicators" stroke="#f7faff" stroke-width="2"></g>
  </svg>`;
  function drawing(front=false,main=false){return `<svg viewBox="0 0 160 180" aria-hidden="true">
   <ellipse cx="80" cy="154" rx="48" ry="13" class="desk-shadow"/>
@@ -46,7 +41,7 @@ window.MarvisOffice = (() => {
   <g class="work-spark"><path d="M128 39v12m-6-6h12M29 65v8m-4-4h8"/></g>
  </svg>`;}
  let initialized=false, selected='main';
- const seats=new Map(), eventCursors=new Map();
+ const seats=new Map(), indicators=new Map(), eventCursors=new Map();
  const svgNS='http://www.w3.org/2000/svg';
  function statusText(item){
   if(item.mode==='working'&&item.tool==='agent_dispatch')return '分派任务';
@@ -83,14 +78,45 @@ window.MarvisOffice = (() => {
   $('#office-flow-announcement').textContent=returning?`${names[agent]}已向主控返回任务结果`:`主控已向${names[agent]}分派任务`;
   setTimeout(()=>group.remove(),4600);
  }
+ function blinkFailure(agent){
+  const indicator=indicators.get(agent);
+  if(!indicator||indicator.classList.contains('failure-flash'))return;
+  indicator.classList.add('failure-flash');
+  indicator.setAttribute('data-failure','true');
+  const clear=()=>{clearTimeout(timer);indicator.removeEventListener('animationend',clear);indicator.classList.remove('failure-flash');indicator.removeAttribute('data-failure');};
+  indicator.addEventListener('animationend',clear,{once:true});
+  // Also clear when motion is disabled or the office animation is paused offscreen.
+  const timer=setTimeout(clear,2100);
+ }
+ function failureAgent(task,event,index){
+  const data=event.content,result=data.result;
+  const toolFailed=event.kind==='tool_error'||(event.kind==='tool_result'&&(result?.error||result?.status==='failed'));
+  if(toolFailed){
+   // Dispatch envelopes mirror the worker's report, which has its own event.
+   if(data.tool==='agent_dispatch'&&result?.agent)return null;
+   return data.agent||role(data.tool);
+  }
+  if(event.kind==='context_compaction_error')return 'context';
+  if(event.kind==='agent_result'&&['failed','partial'].includes(result?.status)){
+   // Do not flash a second time for the summary of an already reported tool failure.
+   const alreadyReported=task.events.slice(0,index).some(previous=>{
+    const content=previous.content;
+    return content.agent===data.agent&&content.request_id===data.request_id&&
+     (previous.kind==='tool_error'||(previous.kind==='tool_result'&&(content.result?.error||content.result?.status==='failed')));
+   });
+   return alreadyReported?null:data.agent;
+  }
+  return null;
+ }
  function renderFlows(snapshot){
   for(const task of snapshot.tasks){
    const last=eventCursors.get(task.id),events=task.events||[];
-   for(const event of events){
+   for(const [index,event] of events.entries()){
     // First view shows only fresh transfers, never replays an old task history.
     if(last===undefined?Date.now()/1000-event.created>5:event.id<=last)continue;
     if(event.kind==='agent_start')showFlow(event.content.agent,'dispatch');
     else if(event.kind==='agent_result')showFlow(event.content.agent,'return');
+    const failed=failureAgent(task,event,index);if(failed)blinkFailure(failed);
    }
    if(events.length)eventCursors.set(task.id,events[events.length-1].id);
   }
@@ -136,6 +162,15 @@ window.MarvisOffice = (() => {
    const isMain=agent.id==='main';
    const x=isMain?450:450+335*Math.cos(angle),y=isMain?335:350+245*Math.sin(angle);
    seats.set(agent.id,{x,y});
+   if(!isMain){
+    // Project the tangential seat panel into the same plane as the round table.
+    const points=[[-27,-12],[27,-12],[27,12],[-27,12]].map(([tangent,radial])=>{
+     const radius=250+radial;
+     return [450+radius*Math.cos(angle)-tangent*Math.sin(angle),340+(radius*Math.sin(angle)+tangent*Math.cos(angle))*.58];
+    });
+    const indicator=svgNode('path',{'class':'seat-indicator','data-agent':agent.id,'data-active':'false',d:'M '+points.map(point=>point.join(' ')).join(' L ')+' Z'});
+    room.querySelector('.office-seat-indicators').append(indicator);indicators.set(agent.id,indicator);
+   }
    station.style.left=(x/900*100)+'%';station.style.top=(y/720*100)+'%';
    station.style.zIndex=isMain?'3':'4';
    station.classList.toggle('command-station',isMain);
@@ -147,7 +182,12 @@ window.MarvisOffice = (() => {
  }
  function render(snapshot) {
   if(!snapshot)return;init(snapshot);
-  const modes=activity(snapshot);renderFlows(snapshot);
+  const modes=activity(snapshot);
+  for(const [agent,indicator] of indicators){
+   const active=['thinking','working','waiting'].includes(modes[agent]?.mode);
+   indicator.dataset.active=String(active);
+  }
+  renderFlows(snapshot);
   for(const station of document.querySelectorAll('.office-station')){
    const item=modes[station.dataset.agent];
    if(station.dataset.mode!==item.mode)station.dataset.mode=item.mode;

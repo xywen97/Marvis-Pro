@@ -15,6 +15,7 @@ async function run(){
   await page.goto(data.url);await page.waitForFunction(()=>typeof liveConnected!=='undefined'&&liveConnected);
   await page.locator('[data-page=office]').click();assert.equal(await page.locator('.office-station').count(),9);
   assert.equal(await page.locator('.office-station[data-mode=idle]').count(),9);
+  assert.equal(await page.locator('.seat-indicator[data-active=false]').count(),8);
   const compacting=await page.evaluate(()=>{
    const snapshot={agents:state.agents,tasks:[{id:'context-qa',status:'running',events:[
     {kind:'context_compaction_start',content:{agent:'context',target_agent:'coding'}}]}]};
@@ -30,6 +31,7 @@ async function run(){
   await page.waitForFunction(()=>document.querySelector('.agent-main')?.dataset.mode==='thinking');
   await page.waitForFunction(()=>document.querySelector('.agent-computer')?.dataset.mode==='working');
   assert.equal(await page.locator('#office-active-count').textContent(),'1');
+  assert.equal(await page.locator('.seat-indicator[data-agent=computer]').getAttribute('data-active'),'true');
   assert.equal(await page.locator('.agent-main .station-status').textContent(),'统筹任务');
   await page.waitForSelector('.office-flow[data-agent=computer][data-direction=dispatch]');
   const dispatch=page.locator('.flow-dispatch[data-agent=computer]').last();
@@ -55,6 +57,7 @@ async function run(){
   });
   assert(directions.out[0]<directions.out[1]&&directions.back[0]>directions.back[1],'result flow must reverse the dispatch direction');
   await page.waitForFunction(()=>document.querySelector('#office-done-count').textContent==='1');
+  assert.equal(await page.locator('.seat-indicator[data-active=true]').count(),0);
   const stages=await page.evaluate(()=>{
    const snapshot=JSON.parse(JSON.stringify(state));snapshot.tasks[0].status='running';
    snapshot.tasks[0].events=[{kind:'model_start',content:{agent:'app'}}];
@@ -79,6 +82,41 @@ async function run(){
    MarvisOffice.render(snapshot);const replayed=!!document.querySelector('.office-flow[data-agent=app]');
    MarvisOffice.render(state);return replayed;
   });assert.equal(historical,false,'opening an old task must not replay historical transfers');
+  await page.evaluate(()=>{
+   window.indicatorOriginal=state;state=JSON.parse(JSON.stringify(state));
+   const task=state.tasks[0];task.id='seat-failure-qa';task.status='running';
+   task.events=[{id:1,kind:'model_start',created:Date.now()/1000,content:{agent:'app',request_id:'seat-request'}}];
+   MarvisOffice.render(state);
+   const panel=document.querySelector('.seat-indicator[data-agent=app]');window.seatIterations=0;
+   panel.addEventListener('animationiteration',()=>window.seatIterations++);
+   task.events.push({id:2,kind:'tool_error',created:Date.now()/1000,content:{agent:'app',request_id:'seat-request',tool:'app_open',text:'test failure'}});
+   MarvisOffice.render(state);MarvisOffice.render(state);
+  });
+  const panel=page.locator('.seat-indicator[data-agent=app]');
+  await page.waitForFunction(()=>getComputedStyle(document.querySelector('.seat-indicator[data-agent=app]')).fill==='rgb(239, 114, 123)');
+  assert.equal(await panel.evaluate(n=>getComputedStyle(n).animationIterationCount),'3');
+  await page.waitForFunction(()=>!document.querySelector('.seat-indicator[data-agent=app]').classList.contains('failure-flash'));
+  assert.equal(await page.evaluate(()=>window.seatIterations),2,'three flashes must finish, without restarting on refresh');
+  assert.equal(await panel.evaluate(n=>getComputedStyle(n).fill),'rgb(93, 189, 153)');
+  const duplicate=await page.evaluate(()=>{
+   const task=state.tasks[0];
+   task.events.push({id:3,kind:'agent_result',created:Date.now()/1000,content:{agent:'app',request_id:'seat-request',result:{status:'partial'}}});
+   MarvisOffice.render(state);return document.querySelector('.seat-indicator[data-agent=app]').classList.contains('failure-flash');
+  });assert.equal(duplicate,false,'a report of the same tool failure must not flash again');
+  await page.evaluate(()=>{
+   const task=state.tasks[0];
+   task.events.push({id:4,kind:'tool_result',created:Date.now()/1000,content:{agent:'app',tool:'app_open',result:{error:'second failure'}}});
+   MarvisOffice.render(state);task.status='failed';task.updated=Date.now()/1000;MarvisOffice.render(state);
+  });
+  assert.equal(await panel.getAttribute('data-active'),'false');
+  await page.waitForFunction(()=>!document.querySelector('.seat-indicator[data-agent=app]').classList.contains('failure-flash'));
+  assert.equal(await panel.evaluate(n=>getComputedStyle(n).fill),'rgb(194, 208, 228)');
+  await page.evaluate(()=>{
+   const task=state.tasks[0];task.id='old-seat-failure-qa';
+   task.events=[{id:5,kind:'tool_error',created:Date.now()/1000-60,content:{agent:'app',tool:'app_open'}}];
+   MarvisOffice.render(state);
+  });assert.equal(await panel.getAttribute('data-failure'),null,'old failures must not replay');
+  await page.evaluate(()=>{state=window.indicatorOriginal;delete window.indicatorOriginal;MarvisOffice.render(state);});
   await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   await page.emulateMedia({reducedMotion:'reduce'});
   const reducedFlow=await page.evaluate(()=>{
@@ -92,7 +130,7 @@ async function run(){
   await page.emulateMedia({reducedMotion:'no-preference'});await page.locator('[data-page=chat]').click();
   assert.equal(await page.locator('.agent-main .mascot').evaluate(n=>getComputedStyle(n).animationPlayState),'paused');
   assert.deepEqual(errors,[]);
-  console.log('Office UI passed: nine stable avatars, context handback, real thinking/tool/completion states, animated transforms, nested task links, counters, distinct analysis/review/coordination states, dispatch and return packet directions without replay, narrow layout, reduced motion and background pause.');
+  console.log('Office UI passed: nine stable avatars, context handback, real thinking/tool/completion states, animated transforms, nested task links, counters, green/gray seat indicators and exactly three red failure flashes with live recovery and deduplication, distinct analysis/review/coordination states, dispatch and return packet directions without replay, narrow layout, reduced motion and background pause.');
  }finally{if(browser)await browser.close();fixture.stdin.end();}
 }
 run().catch(error=>{console.error(error);process.exitCode=1});
