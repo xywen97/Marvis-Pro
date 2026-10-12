@@ -15,7 +15,8 @@ PARTS = ['## 流式验证\n\n', '这是第一段，', '这是第二段，', '最
 if '--burst-tail' in sys.argv: PARTS.append('\n\n' + '最后的大段内容仍需连续显示。'*200)
 MULTI_TOOLS = '--multi-tools' in sys.argv
 TEAM_TOOLS = '--team-tools' in sys.argv
-EVALUATION = '--evaluation' in sys.argv
+EVALUATION_FAILURE = '--evaluation-failure' in sys.argv
+EVALUATION = '--evaluation' in sys.argv or EVALUATION_FAILURE
 WITH_TOOLS = '--tools' in sys.argv or MULTI_TOOLS or TEAM_TOOLS
 class Model(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
@@ -29,8 +30,10 @@ class Model(BaseHTTPRequestHandler):
             if TEAM_TOOLS:
                 names = {t['function']['name'] for t in request.get('tools', [])}
                 main = 'agent_dispatch' in names
-                if EVALUATION and not names:
-                    send({'content': json.dumps({'score': 10, 'reason': '任务与证据一致，交付可使用。'}, ensure_ascii=False)})
+                if '这是失败后的状态说明' in request['messages'][0]['content']:
+                    send({'content': '电脑管家已完成磁盘和内存检查；交付评测未通过，仍需修正结果说明。'})
+                elif EVALUATION and not names:
+                    send({'content': json.dumps({'score': 2 if EVALUATION_FAILURE else 10, 'reason': '缺少检查结果细节' if EVALUATION_FAILURE else '任务与证据一致，交付可使用。'}, ensure_ascii=False)})
                 elif main and request['messages'][-1]['role'] == 'user':
                     send({'content': '我先安排电脑管家检查磁盘和内存。'})
                     send({'tool_calls': [{'index': 0, 'id': 'dispatch-computer', 'function': {
@@ -68,7 +71,7 @@ if __name__ == '__main__':
     with tempfile.TemporaryDirectory() as folder:
         model=ThreadingHTTPServer(('127.0.0.1',0),Model)
         threading.Thread(target=model.serve_forever,daemon=True).start()
-        runtime=Runtime(folder, config={'evaluation': {'enabled': EVALUATION}})
+        runtime=Runtime(folder, config={'evaluation': {'enabled': EVALUATION, 'max_repairs': 1}})
         if '--empty-duplicates' in sys.argv:
             runtime.store.session();runtime.store.session()
         if WITH_TOOLS:

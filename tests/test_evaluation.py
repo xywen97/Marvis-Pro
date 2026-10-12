@@ -25,7 +25,13 @@ class DeepEvalIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.runtime.close(); self.temp.cleanup()
 
-    def run_task(self, respond, prompt='交付一份简明的结果说明'):
+    def run_task(self, respond, prompt='交付一份简明的结果说明', failure_response='本次交付未通过评测。请根据失败原因继续修正；已完成的检查保留在执行记录中。'):
+        original = respond
+        def respond(messages, **kwargs):
+            if '这是失败后的状态说明' in messages[0]['content']:
+                self.assertEqual(kwargs['tool_choice'], 'none')
+                return ChatResult.success(failure_response) if failure_response else ChatResult.failure('汇总模型不可用')
+            return original(messages, **kwargs)
         with patch.object(LLMClient, 'configured', new_callable=lambda: property(lambda s: True)), \
                 patch.object(LLMClient, 'chat', side_effect=respond):
             task = self.runtime.submit(prompt)
@@ -55,6 +61,28 @@ class DeepEvalIntegrationTests(unittest.TestCase):
         self.assertFalse(any(e['kind'] == 'assistant_stream' for e in events))
         self.assertTrue(any(e['kind'] == 'delivery_accepted' for e in events))
         self.assertEqual(row['result'], '实际交付内容')
+
+    def test_delivery_gate_remains_available_after_thirteen_worker_dispatches(self):
+        self.runtime.config['orchestration'] = {'max_dispatches': 1}
+        main_count = 0
+        def respond(messages, **kwargs):
+            nonlocal main_count
+            names = {t['function']['name'] for t in kwargs['tools']}
+            if not names: return ChatResult.success('{"score":10,"reason":"探测回执与结论一致"}')
+            if 'agent_dispatch' not in names: return report_reply('轻量探测完成')
+            main_count += 1
+            if main_count > 2: return ChatResult.success('十三次轻量探测已返回，未验证未探测的能力。')
+            calls = []
+            for i in range(7 if main_count == 1 else 6):
+                call = dispatch_reply('computer', f'连通性探测 {main_count}-{i}').tool_calls[0]
+                call['id'] = f'dispatch-{main_count}-{i}'; calls.append(call)
+            return ChatResult.success('', tool_calls=calls)
+        row, events = self.run_task(respond)
+        self.assertEqual(row['status'], 'completed', row['result'])
+        starts = [e['content']['agent'] for e in events if e['kind'] == 'agent_start']
+        self.assertEqual(starts.count('computer'), 13)
+        self.assertEqual(starts.count('evaluation'), 1)
+        self.assertTrue(any(e['kind'] == 'delivery_accepted' for e in events))
 
     def test_failure_feedback_reaches_main_and_new_candidate_is_reevaluated(self):
         main_count = 0; judge_calls = 0
@@ -88,6 +116,10 @@ class DeepEvalIntegrationTests(unittest.TestCase):
         row, events = self.run_task(respond)
         self.assertEqual(row['status'], 'failed'); self.assertEqual(count, 2)
         self.assertIn('核心成果缺失', row['result'])
+        self.assertIn('主控汇总', row['result'])
+        self.assertIn('本次交付未通过评测', row['result'])
+        self.assertTrue(any(e['kind'] == 'failure_summary' for e in events))
+        self.assertEqual(len([e for e in events if e['kind'] == 'delivery_candidate']), 2)
         self.assertFalse(any(e['kind'] == 'delivery_accepted' for e in events))
 
     def test_missing_dependency_process_and_shared_budget_fail_closed(self):
@@ -97,6 +129,26 @@ class DeepEvalIntegrationTests(unittest.TestCase):
         self.runtime.config['evaluation'] = {}; self.runtime.config['orchestration'] = {'max_model_calls': 1}
         row, events = self.run_task(lambda m, **kw: ChatResult.success('候选结果'))
         self.assertEqual(row['status'], 'failed'); self.assertIn('上限', row['result'])
+        self.assertIn('主控汇总', row['result'])
+        self.assertTrue(any(e['kind'] == 'failure_summary' for e in events))
+
+    def test_summary_model_failure_falls_back_to_completed_worker_reports(self):
+        self.runtime.config['evaluation'] = {'python': '/nonexistent/python'}
+        main_calls = 0
+        def respond(messages, **kwargs):
+            nonlocal main_calls
+            names = {t['function']['name'] for t in kwargs['tools']}
+            if 'agent_dispatch' in names:
+                main_calls += 1
+                return dispatch_reply('computer', '轻量状态检查') if main_calls == 1 else ChatResult.success('候选交付')
+            return report_reply('电脑检查已返回，但系统版本尚未验证')
+        row, events = self.run_task(respond, failure_response=None)
+        self.assertEqual(row['status'], 'failed')
+        self.assertIn('主控汇总', row['result'])
+        self.assertIn('电脑管家', row['result'])
+        self.assertIn('系统版本尚未验证', row['result'])
+        self.assertFalse(any(e['kind'] == 'delivery_accepted' for e in events))
+        self.assertTrue(any(e['kind'] == 'failure_summary' for e in events))
 
     def test_eval_context_uses_actual_artifact_and_no_other_agents_private_context(self):
         p = self.root / 'artifact.py'; p.write_text('answer = 42\n')

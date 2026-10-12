@@ -70,6 +70,29 @@ async function run(){
   });
   assert.equal(Array.from(previewChecks.truncated).length,50);assert(previewChecks.truncated.endsWith('...'));
   assert.equal(previewChecks.next,'agent_report {"id":"worker"}');assert(previewChecks.stable);assert.equal(previewChecks.completed,'');
+  const statusChecks=await page.evaluate(()=>{
+   const root=document.createElement('div');document.body.append(root);
+   const task={status:'failed',events:[
+    {id:1,kind:'tool_start',content:{step:1,call_id:'ok',tool:'agent_inspect',arguments:{}}},
+    {id:2,kind:'tool_result',content:{step:1,call_id:'ok',result:{ok:true}}},
+    {id:3,kind:'tool_start',content:{step:2,call_id:'error',tool:'agent_dispatch',arguments:{}}},
+    {id:4,kind:'tool_result',content:{step:2,call_id:'error',result:{status:'failed',summary:'助手失败'}}},
+    {id:5,kind:'tool_start',content:{step:3,call_id:'nested',tool:'code_execute',arguments:{}}},
+    {id:6,kind:'tool_result',content:{step:3,call_id:'nested',result:{error:'进程退出失败'}}},
+    {id:7,kind:'tool_start',content:{step:4,call_id:'rejected',tool:'file_write',arguments:{}}},
+    {id:8,kind:'rejected',content:{step:4,call_id:'rejected',result:{rejected:true}}},
+    {id:9,kind:'failed',content:{step:5,text:'评测不可用'}}]};
+   const labels=AgentProgress.steps(task).map(group=>{
+    AgentProgress.updateTrace(root,task,[group]);return root.querySelector('.trace-label').textContent;
+   });
+   AgentProgress.updateTrace(root,task);
+   const failedText=[...root.querySelectorAll('.tool-failed .tool-payload')].map(n=>n.textContent);
+   const rejected=root.querySelectorAll('.tool-state')[3].textContent;
+   root.remove();return {labels,failedText,rejected};
+  });
+  assert.deepEqual(statusChecks.labels,['已完成 · 执行过程','存在错误 · 执行过程','存在错误 · 执行过程','已完成 · 执行过程','任务中断 · 执行过程']);
+  assert(statusChecks.failedText[0].includes('助手失败'));assert(statusChecks.failedText[1].includes('进程退出失败'));
+  assert.equal(statusChecks.rejected,'已拒绝');
   await page.evaluate(()=>{document.querySelector('.tool-details').open=false;});
   await page.evaluate(()=>runAppCommand('/result 1'));
   assert.notEqual(await traces.first().getAttribute('open'),null,'result command must expand its containing trace');

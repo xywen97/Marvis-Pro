@@ -143,7 +143,7 @@ class IndependentAgentTests(unittest.TestCase):
         errors = [e['content']['text'] for e in self.runtime.store.events(task['id']) if e['kind'] == 'tool_error']
         self.assertTrue(any('必填' in s for s in errors)); self.assertTrue(any('自己' in s for s in errors))
 
-    def test_repeated_dispatch_and_global_budget_bound_cycles(self):
+    def test_repeated_dispatch_protection_survives_removal_of_global_dispatch_cap(self):
         self.runtime.config['orchestration'] = {'max_rounds': 8, 'max_dispatches': 3}
         counts = {'main': 0, 'worker': 0}
         def respond(messages, **kwargs):
@@ -153,9 +153,29 @@ class IndependentAgentTests(unittest.TestCase):
             if counts['main'] <= 5: return dispatch_reply(objective='变化' + str(counts['main']))
             return ChatResult.success('预算已限制转接')
         task = self.submit(respond)
-        self.assertEqual(counts['worker'], 3)
+        self.assertEqual(counts['worker'], 4)
         errors = [e['content']['text'] for e in self.runtime.store.events(task['id']) if e['kind'] == 'tool_error']
-        self.assertTrue(any('循环' in s for s in errors)); self.assertTrue(any('调度上限' in s for s in errors))
+        self.assertTrue(any('循环' in s for s in errors))
+        self.assertFalse(any('调度上限' in s for s in errors))
+
+    def test_more_than_twelve_dispatches_ignore_legacy_limit(self):
+        self.runtime.config['orchestration'] = {'max_rounds': 8, 'max_dispatches': 1}
+        main_calls = 0
+        def respond(messages, **kwargs):
+            nonlocal main_calls
+            if not self.main(kwargs): return report_reply('轻量探测完成')
+            main_calls += 1
+            if main_calls > 2: return ChatResult.success('已完成十三次独立探测')
+            self.assertNotIn('调度 12 次', messages[0]['content'])
+            calls = []
+            for i in range(7 if main_calls == 1 else 6):
+                call = dispatch_reply(objective=f'独立探测 {main_calls}-{i}').tool_calls[0]
+                call['id'] = f'dispatch-{main_calls}-{i}'; calls.append(call)
+            return ChatResult.success('', tool_calls=calls)
+        task = self.submit(respond)
+        events = self.runtime.store.events(task['id'])
+        self.assertEqual(len([e for e in events if e['kind'] == 'agent_start']), 13)
+        self.assertFalse(any(e['kind'] == 'tool_error' for e in events))
 
     def test_local_mode_worker_whitelist_and_disabled_browser(self):
         self.runtime.update_settings({'mode': 'local'}); workers = []

@@ -61,7 +61,7 @@ window.AgentProgress = (() => {
    }else if(event.kind==='tool_start'){
     const key=d.call_id||`event-${event.id}`;let tool=step.tools.find(t=>t.key===key);
     if(!tool){tool={key};step.tools.push(tool);}tool.start=event;
-   }else if(['tool_result','tool_error','approval','approved'].includes(event.kind)){
+   }else if(['tool_result','tool_error','rejected','approval','approved'].includes(event.kind)){
     const tool=d.call_id?step.tools.find(t=>t.key===d.call_id):[...step.tools].reverse().find(t=>t.start?.content.tool===d.tool&&!t.result);
     if(tool){if(event.kind==='approval')tool.approval=event;else if(event.kind==='approved')tool.approved=event;else tool.result=event;}
     else step.events.push(event);
@@ -78,16 +78,16 @@ window.AgentProgress = (() => {
  function updateTool(node,tool,task) {
   const d=(tool.start||tool.stream).content, result=tool.result;
   node.querySelector('.tool-name').textContent=d.tool||'准备工具调用';
-  const failed=result?.kind==='tool_error';
+  const failed=result?.kind==='tool_error'||!!result?.content.result?.error||result?.content.result?.status==='failed';
   node.classList.toggle('tool-failed',failed);
   node.classList.toggle('tool-running',!result&&busy(task));
   node.querySelector('.tool-icon').textContent=failed?'!':result?'✓':'↗';
-  node.querySelector('.tool-state').textContent=result?(failed?'失败':`${result.content.elapsed_ms||0} ms`):tool.approval&&!tool.approved?'等待确认':!busy(task)?'已结束':tool.start?'执行中':'生成调用';
+  node.querySelector('.tool-state').textContent=result?(failed?'失败':result.kind==='rejected'?'已拒绝':`${result.content.elapsed_ms||0} ms`):tool.approval&&!tool.approved?'等待确认':!busy(task)?'已结束':tool.start?'执行中':'生成调用';
   const payload=node.querySelector('.tool-payload');
   const value=JSON.stringify([d.arguments,result?.content,tool.approval?.content]);
   if(payload._value!==value){
    payload._value=value;payload.replaceChildren(el('div','tool-payload-label','调用参数'),el('pre','',typeof d.arguments==='string'?d.arguments:JSON.stringify(d.arguments,null,2)));
-   if(result)payload.append(el('div','tool-payload-label',failed?'错误':'返回结果'),el('pre','',failed?result.content.text:JSON.stringify(result.content.result,null,2)));
+   if(result)payload.append(el('div','tool-payload-label',failed?'错误':'返回结果'),el('pre','',failed?(result.content.text||JSON.stringify(result.content.result,null,2)):JSON.stringify(result.content.result,null,2)));
    else if(tool.approval&&!tool.approved)payload.append(el('div','tool-payload-label','待确认操作'),el('pre','',JSON.stringify(tool.approval.content,null,2)));
   }
  }
@@ -114,7 +114,12 @@ window.AgentProgress = (() => {
    detail.addEventListener('toggle',()=>document.dispatchEvent(new Event('agent-content-resize')));
   }
   const detail=root.firstElementChild;
-  detail.querySelector('.trace-label').textContent=`${task.branch_cutoff?'历史截点':statuses[task.status]} · 执行过程`;
+  const tools=groups.flatMap(group=>group.tools);
+  const errors=tools.filter(tool=>tool.result?.kind==='tool_error'||tool.result?.content.result?.error||tool.result?.content.result?.status==='failed').length;
+  const pendingTools=tools.some(tool=>!tool.result);
+  const interrupted=groups.some(group=>group.events.some(event=>['failed','cancelled','cancel_requested'].includes(event.kind)));
+  const label=task.branch_cutoff?'历史截点':errors?'存在错误':pendingTools?(busy(task)?'执行中':'未完成'):interrupted?'任务中断':'已完成';
+  detail.querySelector('.trace-label').textContent=`${label} · 执行过程`;
   const latest=steps(task).at(-1)?.step;
   const activeTools=busy(task)?groups.flatMap(group=>group.tools):[];
   const pending=activeTools.filter(tool=>!tool.result);

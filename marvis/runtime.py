@@ -434,7 +434,8 @@ class Runtime:
                 if direct['tool'] == 'delivery_evaluate':
                     from marvis.coordinator import Coordinator
                     validate_arguments('delivery_evaluate', direct.get('arguments', {}))
-                    review = Coordinator(self, ident, session_id, caps, settings).dispatch({
+                    coordinator = Coordinator(self, ident, session_id, caps, settings)
+                    review = coordinator.dispatch({
                         'agent': 'evaluation', 'objective': prompt, 'context': direct['arguments']['candidate']})
                     if review['status'] != 'completed': raise ValueError(review['summary'])
                     reply = review['summary']
@@ -457,7 +458,14 @@ class Runtime:
             self.store.event(ident, 'cancelled', {'text': str(e)})
         except Exception as e:
             self._preserve_partial_reply(ident)
-            reply = '任务失败：' + str(e)
+            try:
+                detail = coordinator.failure_summary(e) if 'coordinator' in locals() else str(e)
+            except Cancelled as stopped:
+                self.status(ident, 'cancelled', str(stopped))
+                self.store.add_message(session_id, 'assistant', str(stopped), ident)
+                self.store.event(ident, 'cancelled', {'text': str(stopped)})
+                return
+            reply = '任务失败：' + detail
             self.status(ident, 'failed', reply); self.store.add_message(session_id, 'assistant', reply, ident)
             self.store.event(ident, 'failed', {'text': reply})
         finally:
@@ -512,11 +520,11 @@ class Runtime:
             raise ValueError('当前任务证据超过上下文预算，请拆分任务或从近期执行节点继续。')
         return projected
 
-    def _model_turn(self, ident, client, messages, step, tool_choice='auto', tools=None, agent='main', request_id=None, deadline=None):
+    def _model_turn(self, ident, client, messages, step, tool_choice='auto', tools=None, agent='main', request_id=None, deadline=None, status_summary=False):
         self.store.event(ident, 'model_start', {'text': '正在生成处理方案与回复', 'step': step, 'model': client.model, 'agent': agent, 'request_id': request_id})
         parts = []; event_id = None; last_flush = 0.0
         # Drafts must not appear as a finished answer before the gate accepts them.
-        hold_candidate = agent == 'main' and evaluation_enabled(self)
+        hold_candidate = agent == 'main' and (evaluation_enabled(self) or status_summary)
         tool_events = {}; tool_parts = {}
         def check_turn():
             self._check(ident)
@@ -560,7 +568,7 @@ class Runtime:
             self.store.execute("UPDATE events SET kind='assistant_note' WHERE id=?", (event_id,))
             self.store.record_event_entry(ident,event_id,'assistant_note',{'text':result.content,'step':step})
             self.status(ident, 'running')
-        if hold_candidate and result.ok and result.content:
+        if hold_candidate and not status_summary and result.ok and result.content:
             kind = 'assistant_note' if result.tool_calls else 'delivery_candidate'
             self.store.event(ident, kind, {'text': result.content, 'step': step, 'agent': 'main', 'provisional': True})
         return result
@@ -570,7 +578,11 @@ class Runtime:
         client = self.model(settings)
         if not client.configured: return '模型尚未配置。请在设置中填写模型端点和名称，API Key 放在 .env。文件与系统工具无需模型即可运行。'
         from marvis.coordinator import Coordinator
-        return Coordinator(self, ident, session_id, caps, settings).run()
+        coordinator = Coordinator(self, ident, session_id, caps, settings)
+        try: return coordinator.run()
+        except Cancelled: raise
+        except Exception as error:
+            raise RuntimeError(coordinator.failure_summary(error)) from error
 
     @staticmethod
     def format_result(result):

@@ -11,6 +11,8 @@ import sys
 import tempfile
 import time
 
+from marvis.team import tool_message
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -24,36 +26,42 @@ def digest(value):
 
 def evidence_snapshot(coordinator):
     """Read actual artifacts from engine results, never from candidate-supplied evidence."""
-    rows = []; paths = set()
+    rows = []; paths = set(); source_paths = {}
     for event in coordinator.runtime.store.events(coordinator.ident):
         data = event['content']
         if event['kind'] in ('tool_result', 'tool_error', 'rejected') and data.get('tool') not in ('agent_dispatch', 'delivery_evaluate'):
             rows.append({'kind': event['kind'], 'agent': data.get('agent'), 'tool': data.get('tool'),
                          'result': data.get('result', data.get('text'))})
             result = data.get('result') or {}
-            if isinstance(result, dict):
-                for key in ('path', 'created', 'target'):
-                    if isinstance(result.get(key), str): paths.add(result[key])
-        if event['kind'] == 'tool_start' and data.get('tool') in ('file_write', 'file_edit', 'document_convert'):
-            args = data.get('arguments')
-            if isinstance(args, dict) and isinstance(args.get('path'), str): paths.add(args['path'])
+            if isinstance(result, dict) and event['kind'] == 'tool_result':
+                if data.get('tool') in ('file_write', 'file_edit', 'document_convert') and not result.get('error'):
+                    for key in ('created', 'edited', 'target'):
+                        if isinstance(result.get(key), str): paths.add(result[key])
+                elif data.get('tool') in ('file_read', 'file_read_lines', 'code_check') and isinstance(result.get('path'), str):
+                    source_paths[result['path']] = None
     if len(paths) > 20: raise ValueError('产物超过 20 个文件评测上限，请分阶段交付。')
-    artifacts = []
-    for value in sorted(paths):
+    artifacts = []; sources = []
+    selected_sources = [p for p in source_paths if p not in paths][-8:]
+    for value in sorted(paths) + selected_sources:
         coordinator.runtime._check(coordinator.ident)
+        destination = artifacts if value in paths else sources
+        text_limit = max(1000, 20000 // max(1, len(paths))) if value in paths else 2000
         try:
             p = coordinator.caps.path(value)
             if not p.is_file():
-                artifacts.append({'path': str(p), 'error': '文件不存在'}); continue
+                destination.append({'path': str(p), 'error': '文件不存在'}); continue
             size = p.stat().st_size
             if size > 2 * 1024 * 1024:
-                artifacts.append({'path': str(p), 'size': size, 'notice': '大文件未读取，需要专项验证'}); continue
+                destination.append({'path': str(p), 'size': size, 'notice': '大文件未读取，需要专项验证'}); continue
             raw = p.read_bytes()
-            artifacts.append({'path': str(p), 'sha256': hashlib.sha256(raw).hexdigest(),
-                              'text': raw.decode('utf-8', errors='replace')[:12000], 'truncated': len(raw) > 12000})
+            destination.append({'path': str(p), 'sha256': hashlib.sha256(raw).hexdigest(),
+                              'text': raw.decode('utf-8', errors='replace')[:text_limit], 'truncated': len(raw.decode('utf-8', errors='replace')) > text_limit})
         except (OSError, ValueError, PermissionError) as error:
-            artifacts.append({'path': value, 'error': str(error)})
-    snapshot = {'records': rows, 'artifacts': artifacts}
+            destination.append({'path': value, 'error': str(error)})
+    per_record = max(256, min(4000, 22000 // max(1, len(rows))))
+    bounded_rows = [{**r, 'result_sha256': digest(r['result']), 'result': json.loads(tool_message(r['result'], per_record))} for r in rows]
+    snapshot = {'records': bounded_rows, 'artifacts': artifacts, 'sources': sources,
+                'source_files_total': len(source_paths), 'source_snapshots_limited': len([p for p in source_paths if p not in paths]) > len(selected_sources)}
     raw = json.dumps(snapshot, ensure_ascii=False)
     if len(raw) > 60000:
         # Do not silently drop evidence and still certify the result.

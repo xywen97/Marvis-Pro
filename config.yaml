@@ -58,7 +58,7 @@ logging:
 orchestration:
   max_rounds: 8
   # 全任务共享预算，助手不能通过协作请求重置。
-  max_dispatches: 12
+  # 助手调度不设总次数上限；同一任务的重复转接防护仍由执行器检查。
   max_model_calls: 64
   max_tool_calls: 128
   # 各助手独立执行策略的轮次上限。
