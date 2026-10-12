@@ -45,6 +45,14 @@ async function run(){
    responseSamples.push(await response.locator('.message-text').textContent());await page.waitForTimeout(90);
   }
   await page.waitForFunction(()=>state.tasks[0]?.status==='completed');
+  const expectedTimes=await page.evaluate(async()=>{
+   const messages=await api('messages?session='+session);
+   return messages.map(message=>new Date(message.created*1000).toISOString());
+  });
+  assert.equal(await page.locator('.message.user .message-time').getAttribute('datetime'),expectedTimes[0]);
+  assert.equal(await response.locator('.message-time').getAttribute('datetime'),expectedTimes.at(-1));
+  assert.match(await response.locator('.message-time').textContent(),/^\d{2}:\d{2}$/);
+  assert.equal(await thought.locator('.message-time').getAttribute('datetime'),await page.evaluate(()=>new Date(state.tasks[0].events.find(event=>event.kind==='assistant_note'||event.kind==='assistant_stream').created*1000).toISOString()));
   assert(new Set(responseSamples).size>=3,'final answer must stream directly in its own conversation bubble');
   assert(await responseNode.evaluate(node=>node===document.querySelectorAll('#messages > .message.assistant')[2]),'completion retains the streaming reply DOM');
   assert.equal(await page.locator('.agent-step').count(),2,'only tool-bearing steps belong in execution traces');

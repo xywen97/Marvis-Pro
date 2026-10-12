@@ -110,7 +110,7 @@ function messageSpec(key,message,{streaming=false,note=false,displayText=message
   const content=row.querySelector('.message-text');
   if(message.role==='assistant')AgentProgress.text(content,displayText,streaming);
   else if(content.textContent!==message.content)content.replaceChildren(el('div','message-content',message.content));
-  bubbleActions(row.querySelector('.message-body'),message.id,message.content);
+  bubbleActions(row.querySelector('.message-body'),message.id,message.content,message.created);
  }};
 }
 async function renderMessages() {
@@ -136,7 +136,7 @@ async function renderMessages() {
    if(conversation.finalRendered)renderedAnswers.add(finalMessage.id);
    for(const item of conversation.items){
     if(item.kind==='reply'){
-     const reply=item.message||{role:'assistant',id:item.event.kind==='assistant_note'?'event-'+item.event.id:null,content:item.event.content.text};
+     const reply=item.message||{role:'assistant',id:item.event.kind==='assistant_note'?'event-'+item.event.id:null,content:item.event.content.text,created:item.event.created};
      specs.push(messageSpec(item.key,reply,{streaming:item.streaming,note:item.note,displayText:item.event.content.text}));
     }else specs.push({key:item.key,make:()=>el('div','agent-progress'),update:root=>AgentProgress.updateTrace(root,task,item.groups)});
    }
