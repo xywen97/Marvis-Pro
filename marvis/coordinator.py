@@ -15,20 +15,13 @@ class Coordinator:
         self.runtime, self.ident, self.session_id = runtime, ident, session_id
         self.caps, self.settings = caps, settings
         self.options = runtime.config.get('orchestration') or {}
-        self.main_rounds = self.limit('max_rounds', 8, 24)
-        self.model_limit = self.limit('max_model_calls', 64, 128)
-        self.tool_limit = self.limit('max_tool_calls', 128, 256)
         self.model_calls = 0; self.tool_calls = 0; self.dispatches = 0
         self.signatures = {}; self.failures = {}; self.call_ids = set(); self.completed_requests = set(); self.results = []
         self.evaluation_receipts = []; self.repairs = 0
         self.available = [t for t in TOOLS if not (settings['mode'] == 'local' and t['function']['name'] in ('browser_read', 'browser_open', 'web_search', 'code_execute'))]
 
-    def limit(self, key, default, maximum):
-        return max(1, min(maximum, int(self.options.get(key, default))))
-
     def turn(self, client, messages, tools, actor, request_id=None, final=False, deadline=None, status_summary=False):
         self.runtime._check(self.ident)
-        if self.model_calls >= self.model_limit: raise ValueError('达到任务共享模型调用上限。')
         self.model_calls += 1
         return self.runtime._model_turn(self.ident, client, messages, self.model_calls,
                                         tool_choice='none' if final else 'auto', tools=tools,
@@ -54,7 +47,6 @@ class Coordinator:
 
     def physical_tool(self, actor, call, request_id=None):
         self.tool_calls += 1
-        if self.tool_calls > self.tool_limit: raise ValueError('达到任务共享工具调用上限。')
         fn = call['function']; name = fn.get('name'); args = json.loads(fn.get('arguments') or '{}')
         # Enforce ownership even if a provider invents an unavailable function.
         if name not in agent_tool_names(actor): raise PermissionError('不能调用其他 Agent 的工具：' + str(name))
@@ -216,11 +208,6 @@ class Coordinator:
         reasons = '；'.join(m['name'] + '：' + str(m['reason']) for m in report['metrics'] if not m['passed'])
         raise ValueError('交付评测未通过，未作为合格成果交付。已执行的文件修改不会自动撤销。' + reasons)
 
-    def budget_summary(self):
-        if enabled(self.runtime): raise ValueError('共享模型预算耗尽，无法完成交付评测，未放行候选成果。')
-        return '已达到任务共享调用上限，停止执行；任务可能尚未全部完成。\n\n' + '\n'.join(
-            f"{r['agent']}（{r['status']}）：{r['summary']}" for r in self.results)
-
     def failure_summary(self, error):
         """Always preserve a useful progress report without certifying a rejected delivery."""
         self.runtime._check(self.ident)
@@ -237,34 +224,32 @@ class Coordinator:
         task = self.runtime.store.one('SELECT prompt FROM tasks WHERE id=?', (self.ident,))
         header = '交付未放行：' + str(error)
         summary = facts
-        if self.model_calls < self.model_limit:
-            try:
-                client = self.runtime.model(self.settings)
-                if not client.configured: raise ValueError('模型尚未配置，使用执行器汇总。')
-                client.timeout = min(getattr(client, 'timeout', 30), 30)
-                tools = [t for t in self.available if TOOL_AGENTS[t['function']['name']] == 'main'] + [DISPATCH_TOOL]
-                result = self.turn(client, [{'role': 'system', 'content':
-                    '你是主控。当前任务因执行或评测问题停止。只用给定执行证据汇总各助手已完成、失败和未验证部分，'
-                    '说明下一步。不能宣称评测通过、不能交付未获放行的成果、不能调用工具。'
-                    '这是失败后的状态说明，不是再次提交成果。'},
-                    {'role': 'user', 'content': tool_message({'task': task['prompt'], 'failure': str(error), 'reports': latest, 'tool_errors': tool_failures}, 18000)}],
-                    tools, 'main', final=True, status_summary=True)
-                if result.ok and not result.tool_calls and result.content.strip(): summary = result.content.strip()
-            except Exception:
-                self.runtime._check(self.ident)
+        try:
+            client = self.runtime.model(self.settings)
+            if not client.configured: raise ValueError('模型尚未配置，使用执行器汇总。')
+            client.timeout = min(getattr(client, 'timeout', 30), 30)
+            tools = [t for t in self.available if TOOL_AGENTS[t['function']['name']] == 'main'] + [DISPATCH_TOOL]
+            result = self.turn(client, [{'role': 'system', 'content':
+                '你是主控。当前任务因执行或评测问题停止。只用给定执行证据汇总各助手已完成、失败和未验证部分，'
+                '说明下一步。不能宣称评测通过、不能交付未获放行的成果、不能调用工具。'
+                '这是失败后的状态说明，不是再次提交成果。'},
+                {'role': 'user', 'content': tool_message({'task': task['prompt'], 'failure': str(error), 'reports': latest, 'tool_errors': tool_failures}, 18000)}],
+                tools, 'main', final=True, status_summary=True)
+            if result.ok and not result.tool_calls and result.content.strip(): summary = result.content.strip()
+        except Exception:
+            self.runtime._check(self.ident)
         self.runtime.store.event(self.ident, 'failure_summary', {'agent': 'main', 'text': header + '\n\n' + summary})
         return header + '\n\n主控汇总：\n' + summary
 
     def run(self):
         client = self.runtime.model(self.settings)
         tools = [t for t in self.available if TOOL_AGENTS[t['function']['name']] == 'main'] + [DISPATCH_TOOL]
-        system = build_system_prompt(self.settings, self.runtime.config.get('persona') or {}, tools, self.main_rounds)
+        system = build_system_prompt(self.settings, self.runtime.config.get('persona') or {}, tools)
         if not enabled(self.runtime): system += '\n当前配置显式关闭交付评测；不能宣称成果通过 DeepEval。'
-        system += f'\n共享预算：助手调度不设总次数上限；模型调用 {self.model_limit} 次，实体工具调用 {self.tool_limit} 次。'
         messages = [{'role': 'system', 'content': system}] + self.runtime.context_messages(self.session_id, self.ident)
         self.remember_ids(messages)
-        for _ in range(self.main_rounds):
-            if self.model_calls >= self.model_limit: return self.budget_summary()
+        while True:
+            self.runtime._check(self.ident)
             result = self.turn(client, messages, tools, 'main')
             calls = self.normalize(result)
             if not calls:
@@ -296,14 +281,3 @@ class Coordinator:
                     except Exception as error:
                         self.runtime._check(self.ident); self.record_error('main', call, error); out = {'error': str(error)}
                 messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': tool_message(out)})
-        self.runtime.store.event(self.ident, 'execution_limit', {'agent': 'main', 'text': '主控轮次用完，汇总实际结果。'})
-        messages.append({'role': 'system', 'content': '执行预算已用完。仅汇总真实结果和未完成事项，不调用工具。'})
-        if self.model_calls >= self.model_limit:
-            return self.budget_summary()
-        result = self.turn(client, messages, tools, 'main', final=True)
-        self.normalize(result)
-        if result.tool_calls: raise ValueError('模型在执行预算用完后仍返回工具调用，未执行这些操作。')
-        candidate = result.content.strip() or '已达到执行步数上限，请查看执行记录。'
-        rejected = self.gate_candidate(candidate)
-        if rejected: self.blocked(rejected)
-        return candidate

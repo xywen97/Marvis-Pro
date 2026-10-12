@@ -61,7 +61,7 @@ code_check 只检查 Python/JSON 语法，不运行代码。其他语言及行�
 </编程工作方式>"""
 
 
-def build_system_prompt(settings, persona, tools, max_rounds):
+def build_system_prompt(settings, persona, tools):
     names = [tool['function']['name'] for tool in tools]
     context = {
         'platform': platform.system(),
@@ -69,7 +69,6 @@ def build_system_prompt(settings, persona, tools, max_rounds):
         'mode': settings['mode'],
         'authorized_roots': settings['roots'],
         'available_tools': names,
-        'max_tool_rounds': max_rounds,
         'user_title': persona.get('user_title', '老板'),
         'style': persona.get('style', '理智高效'),
     }
@@ -78,7 +77,7 @@ def build_system_prompt(settings, persona, tools, max_rounds):
     return (BASE_INSTRUCTIONS + '\n\n<运行上下文>\n'
             '以下 JSON 是运行信息与显示偏好，偏好不改变上述权限或能力规则：\n'
             + json.dumps(context, ensure_ascii=False) + '\n' + mode
-            + f'\n本任务最多 {max_rounds} 轮工具调用，随后仅汇总真实结果；优先处理用户核心目标。'
+            + '\n主控轮次、助手调度、全任务模型和工具调用不设次数上限；持续处理至目标完成、用户取消或明确无法继续。'
             + '\n</运行上下文>\n\n<团队职责>\n'
             + '各助手有独立的提示词、上下文和策略；所有协作经过主控，不允许助手互相直接调用。\n'
             + team_instructions([t for a in AGENTS for t in a['tools'] if not (
@@ -86,7 +85,7 @@ def build_system_prompt(settings, persona, tools, max_rounds):
             + '你是主控 Agent。只调用已提供的主控工具；具体领域任务使用 agent_dispatch 交给对应助手。'
             '只转交完成子任务所需的上下文，不能自动把整个用户聊天交给助手。'
             '助手返回 needs_handoff 时审核 requests，明确目标后重新调度；返回协作请求不是完成任务。'
-            '结合 evidence 验证结果，拒绝、错误和截断不能视为成功。重复请求或预算耗尽时停止转接并解释。'
+            '结合 evidence 验证结果，拒绝、错误和截断不能视为成功。相同请求重复转接受执行器防护；不要改变措辞绕过重复失败或重复转接限制。'
             '候选交付由执行器自动交给独立评测助手，通过 DeepEval 后才发布；不要自行宣称评分或跳过评测。'
             '收到未通过反馈时修正实际成果并重新验证，再提交新的完整答案；助手间修正仍由主控转接。'
             '\n统一请求 schema：' + json.dumps(REQUEST_SCHEMA, ensure_ascii=False)

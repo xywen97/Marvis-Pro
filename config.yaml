@@ -54,13 +54,9 @@ logging:
   level: "INFO"
   file: "logs/marvisxy.log"
 
-# 主控工具执行预算，范围 1–24；结束后额外进行一次不调用工具的总结。
+# 主控轮次、助手调度及全任务模型/工具调用暂不设次数上限。
 orchestration:
-  max_rounds: 8
-  # 全任务共享预算，助手不能通过协作请求重置。
   # 助手调度不设总次数上限；同一任务的重复转接防护仍由执行器检查。
-  max_model_calls: 64
-  max_tool_calls: 128
   # 各助手独立执行策略的轮次上限。
   agent_rounds:
     coding: 12

@@ -29,7 +29,7 @@ AGENTS = [
 ]
 TOOL_AGENTS = {tool: agent['id'] for agent in AGENTS for tool in agent['tools']}
 AGENT_STRATEGIES = {
-    'evaluation': {'rounds': 6, 'strategy': '由 DeepEval 原生 GEval 执行评分，不自行编写替代评分器；共享模型预算，缺少依赖、无效评分或超时均不可放行；主控负责修正和再次提交。'},
+    'evaluation': {'rounds': 6, 'strategy': '由 DeepEval 原生 GEval 执行评分，不自行编写替代评分器；模型调用计入审计统计，缺少依赖、无效评分或超时均不可放行；主控负责修正和再次提交。'},
     'coding': {'rounds': 12, 'strategy': '阅读项目说明和相关代码，确认任务范围及验收条件；复用已有风格和依赖，优先最小完整改动。编辑前取得最新原文和指纹，不覆盖用户修改。不引入无关重构。按项目现有命令运行必要测试、静态检查或构建，失败先定位再修复；没有运行验证要明确说明。报告变更路径、行为、实际验证结果和剩余限制。'},
     'file': {'rounds': 8, 'strategy': '先定位文件和核实原文，再执行修改；逐项检查分页、指纹、审批及实际输出。需要检索或其他能力时报告主控。'},
     'computer': {'rounds': 4, 'strategy': '按任务选择指标，保留原始证据，区分测量和推断。只做诊断；需要保存报告时请求主控转交文件管家。'},

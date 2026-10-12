@@ -122,15 +122,14 @@ class DeepEvalIntegrationTests(unittest.TestCase):
         self.assertEqual(len([e for e in events if e['kind'] == 'delivery_candidate']), 2)
         self.assertFalse(any(e['kind'] == 'delivery_accepted' for e in events))
 
-    def test_missing_dependency_process_and_shared_budget_fail_closed(self):
+    def test_missing_dependency_fails_closed_but_legacy_model_cap_does_not_block_gate(self):
         self.runtime.config['evaluation'] = {'python': '/nonexistent/python'}
         row, events = self.run_task(lambda m, **kw: ChatResult.success('候选结果'))
         self.assertEqual(row['status'], 'failed'); self.assertFalse(any(e['kind'] == 'delivery_accepted' for e in events))
         self.runtime.config['evaluation'] = {}; self.runtime.config['orchestration'] = {'max_model_calls': 1}
-        row, events = self.run_task(lambda m, **kw: ChatResult.success('候选结果'))
-        self.assertEqual(row['status'], 'failed'); self.assertIn('上限', row['result'])
-        self.assertIn('主控汇总', row['result'])
-        self.assertTrue(any(e['kind'] == 'failure_summary' for e in events))
+        row, events = self.run_task(lambda m, **kw: ChatResult.success('{"score":10,"reason":"满足要求"}' if not kw['tools'] else '候选结果'))
+        self.assertEqual(row['status'], 'completed', row['result'])
+        self.assertTrue(any(e['kind'] == 'delivery_accepted' for e in events))
 
     def test_summary_model_failure_falls_back_to_completed_worker_reports(self):
         self.runtime.config['evaluation'] = {'python': '/nonexistent/python'}

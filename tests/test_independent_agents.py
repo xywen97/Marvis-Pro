@@ -192,16 +192,18 @@ class IndependentAgentTests(unittest.TestCase):
             return report_reply()
         self.submit(respond); self.assertEqual(workers, ['search'])
 
-    def test_shared_model_budget_cannot_reset_for_another_worker(self):
+    def test_legacy_model_budget_does_not_stop_workers_or_main(self):
         self.runtime.config['orchestration'] = {'max_model_calls': 2}
-        calls = []
+        calls = []; main_count = 0
         def respond(messages, **kwargs):
-            calls.append(self.main(kwargs))
-            return dispatch_reply() if self.main(kwargs) else report_reply('实际已提交报告')
-        task = self.submit(respond)
-        self.assertEqual(calls, [True, False])
-        row = self.runtime.store.one('SELECT result FROM tasks WHERE id=?', (task['id'],))
-        self.assertIn('共享调用上限', row['result']); self.assertIn('实际已提交报告', row['result'])
+            nonlocal main_count
+            main = self.main(kwargs); calls.append(main)
+            if not main: return report_reply('实际已提交报告')
+            main_count += 1
+            if main_count > 3: return ChatResult.success('三个助手任务已返回')
+            return dispatch_reply(objective=f'任务 {main_count}')
+        self.submit(respond)
+        self.assertEqual(calls, [True, False, True, False, True, False, True])
 
     def test_terminal_report_cannot_hide_same_batch_execution(self):
         count = 0

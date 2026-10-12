@@ -59,7 +59,8 @@ class AgentContractsTests(unittest.TestCase):
                 self.assertEqual(set(context['available_tools']), offered)
                 self.assertEqual(context['authorized_roots'], [str(self.work)])
                 self.assertEqual(context['user_title'], '同学')
-                self.assertEqual(context['max_tool_rounds'], 24)
+                self.assertNotIn('max_tool_rounds', context)
+                self.assertIn('不设次数上限', system)
                 self.assertEqual(context['mode'], mode)
                 self.assertIn('各助手有独立的提示词、上下文和策略', system)
                 self.assertEqual(offered, {'agent_inspect', 'agent_dispatch'})
@@ -297,12 +298,23 @@ class AgentContractsTests(unittest.TestCase):
         self.assertNotIn('web_search', offered); self.assertIn('agent_inspect', offered)
         self.assertIn('失败两次', json.dumps(self.runtime.store.events(task['id']), ensure_ascii=False))
 
-    def test_execution_budget_does_not_execute_final_provider_calls(self):
-        self.runtime.offline = False; self.runtime.config['orchestration'] = {'max_rounds': 1}
-        result = ChatResult.success('', tool_calls=[{'id': 'c', 'function': {'name': 'agent_inspect', 'arguments': '{}'}}])
-        with patch.object(LLMClient, 'configured', new_callable=lambda: property(lambda s: True)), patch.object(LLMClient, 'chat', return_value=result), patch.object(Capabilities, 'execute', return_value={'ok': True}) as execute:
+    def test_main_rounds_and_call_counts_are_unlimited_even_with_legacy_config(self):
+        self.runtime.offline = False
+        self.runtime.config['orchestration'] = {'max_rounds': 1, 'max_model_calls': 1, 'max_tool_calls': 1}
+        count = 0
+        def respond(messages, **kwargs):
+            nonlocal count
+            count += 1
+            if count > 70: return ChatResult.success('全部检查完成')
+            calls = [{'id': f'{count}-{i}', 'function': {'name': 'agent_inspect', 'arguments': '{}'}} for i in range(2)]
+            return ChatResult.success('', tool_calls=calls)
+        with patch.object(LLMClient, 'configured', new_callable=lambda: property(lambda s: True)), patch.object(LLMClient, 'chat', side_effect=respond), patch.object(Capabilities, 'execute', return_value={'ok': True}) as execute:
             task = self.runtime.submit('帮忙全面评估电脑')
-            self.assertEqual(self.wait(task)['status'], 'failed'); self.assertEqual(execute.call_count, 1)
+            self.assertEqual(self.wait(task)['status'], 'completed')
+            self.assertEqual(execute.call_count, 140)
+            self.assertEqual(count, 71)
+        events = self.runtime.store.events(task['id'])
+        self.assertFalse(any(e['kind'] == 'execution_limit' for e in events))
 
     def test_empty_model_response_is_failure_not_success(self):
         self.runtime.offline = False
