@@ -32,8 +32,15 @@ async function run(){
    const track=document.querySelector('.team-main .context-track');
    const first={main:track.getAttribute('aria-valuenow'),percent:document.querySelector('.team-main .context-percent').textContent,tooltip:document.querySelector('.team-main .context-meter').title,file:document.querySelector('.team-file .context-meter').dataset.pressure,
     context:document.querySelector('.team-context .context-value').textContent};
+   const fill=track.querySelector('.context-fill');fill.style.transition='none';
+   const boundaries=[59.9,60,80,80.1,95].map(percent=>{
+    snapshot.context_usage['context-qa'].main.estimated_tokens=percent/100*256000;MarvisTeam.render(snapshot);
+    return {pressure:track.closest('.context-meter').dataset.pressure,color:getComputedStyle(fill).backgroundColor};
+   });
    snapshot.context_usage['context-qa'].main.estimated_tokens=10000;MarvisTeam.render(snapshot);
-   const compacted={value:track.getAttribute('aria-valuenow'),stable:track===document.querySelector('.team-main .context-track')};
+   const compacted={value:track.getAttribute('aria-valuenow'),stable:track===document.querySelector('.team-main .context-track'),width:fill.style.width,color:getComputedStyle(fill).backgroundColor,pressure:track.closest('.context-meter').dataset.pressure};
+   const backgrounds=[...document.querySelectorAll('.context-track')].map(node=>getComputedStyle(node).backgroundColor);
+   fill.style.removeProperty('transition');
    snapshot.context_usage['context-qa'].main.estimated_tokens=300000;MarvisTeam.render(snapshot);
    const overflow={value:track.getAttribute('aria-valuenow'),text:track.getAttribute('aria-valuetext')};
    session='other-qa';MarvisTeam.render(snapshot);
@@ -42,11 +49,15 @@ async function run(){
    const empty={main:document.querySelector('.team-main .context-value').textContent,
     active:document.querySelectorAll('.team-agent:not([data-mode=idle])').length,
     status:document.querySelector('#team-execution').textContent};
-   session=originalSession;MarvisTeam.render(state);return {first,compacted,overflow,switched,empty};
+   session=originalSession;MarvisTeam.render(state);return {first,boundaries,backgrounds,compacted,overflow,switched,empty};
   });
   assert.equal(meters.first.main,'50.0');assert.equal(meters.first.file,'high');assert.equal(meters.first.context,'30k / 1M · 3.0%');
   assert.equal(meters.first.percent,'50.0%');assert(meters.first.tooltip.includes('128,000 / 256,000 tokens'));
   assert.equal(meters.compacted.value,'3.9');assert(meters.compacted.stable);
+  assert.deepEqual(meters.boundaries.map(item=>item.pressure),['low','medium','medium','high','high']);
+  assert.deepEqual(meters.boundaries.map(item=>item.color),['rgb(101, 184, 143)','rgb(223, 182, 83)','rgb(223, 182, 83)','rgb(217, 123, 123)','rgb(217, 123, 123)']);
+  assert(meters.backgrounds.every(color=>color==='rgb(229, 231, 235)'),'all assistants use the same grey track');
+  assert.equal(meters.compacted.width,'3.90625%');assert.equal(meters.compacted.pressure,'low');assert.equal(meters.compacted.color,'rgb(101, 184, 143)','compaction switches a red meter back to green based on the reduced usage');
   assert.equal(meters.overflow.value,'100.0');assert(meters.overflow.text.includes('117.2%'));
   assert.equal(meters.switched.main,'10.0');assert.equal(meters.switched.file,'未采样 / 256k');
   assert.deepEqual(meters.empty,{main:'未采样 / 256k',active:0,status:'团队待命'});

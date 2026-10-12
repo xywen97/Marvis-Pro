@@ -100,7 +100,7 @@ window.MarvisTeam = (() => {
   const capacity=reading?.window_tokens||snapshot.context_policy?.window_tokens||256000;
   const used=Math.max(0,reading?.estimated_tokens||0),percent=used/capacity*100,level=Math.min(100,percent);
   const meter=row.querySelector('.context-meter'),track=meter.querySelector('.context-track');
-  meter.dataset.pressure=percent>=95?'high':percent>=80?'medium':'low';
+  meter.dataset.pressure=percent>80?'high':percent>=60?'medium':'low';
   meter.querySelector('.context-value').textContent=reading?`${tokenLabel(used)} / ${tokenLabel(capacity)} · ${percent.toFixed(1)}%`:`未采样 / ${tokenLabel(capacity)}`;
   meter.querySelector('.context-percent').textContent=reading?`${percent.toFixed(1)}%`:'未采样';
   track.querySelector('.context-fill').style.width=`${level}%`;
