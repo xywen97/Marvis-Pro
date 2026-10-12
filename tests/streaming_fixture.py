@@ -12,7 +12,9 @@ from marvis.runtime import Runtime
 from marvis.server import serve
 
 PARTS = ['## 流式验证\n\n', '这是第一段，', '这是第二段，', '最后一段。\n\n', '```python\n', 'print("逐步显示")\n', '```']
-WITH_TOOLS = '--tools' in sys.argv
+if '--burst-tail' in sys.argv: PARTS.append('\n\n' + '最后的大段内容仍需连续显示。'*200)
+MULTI_TOOLS = '--multi-tools' in sys.argv
+WITH_TOOLS = '--tools' in sys.argv or MULTI_TOOLS
 class Model(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
     def do_POST(self):
@@ -28,6 +30,12 @@ class Model(BaseHTTPRequestHandler):
                 for index, section in enumerate(('disk','memory')):
                     send({'tool_calls':[{'index':index,'id':f'call-{index}','function':{'name':'system_info','arguments':'{"section":'}}]})
                     send({'tool_calls':[{'index':index,'function':{'arguments':json.dumps(section)+'}'}}]})
+                self.wfile.write(b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');self.wfile.flush();return
+            last_user = max(i for i, message in enumerate(request['messages']) if message['role']=='user')
+            if MULTI_TOOLS and sum(message['role']=='tool' for message in request['messages'][last_user:])==2:
+                for text in ['初步检查已完成，','我再复核','电池状态，','然后给出完整总结。']:
+                    send({'content':text})
+                send({'tool_calls':[{'index':0,'id':'call-battery','function':{'name':'system_info','arguments':'{"section":"battery"}'}}]})
                 self.wfile.write(b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');self.wfile.flush();return
             for part in PARTS:
                 chunk={'choices':[{'index':0,'delta':{'content':part}}]}

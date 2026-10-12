@@ -31,7 +31,7 @@ async function run(){
   const source=await page.evaluate(async()=>await api('tree?session='+session));
   const answer=page.locator('.message.assistant .message-body').last();await answer.getByRole('button',{name:'复制文本',exact:true}).click();
   assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),source.nodes.findLast(n=>n.kind==='assistant').content);
-  assert(await page.locator('.thought-bubble .bubble-actions').count()>0);
+  assert(await page.locator('.assistant-note .bubble-actions').count()>0);
   await answer.getByRole('button',{name:'分支到新聊天',exact:true}).click();await page.waitForFunction(sid=>session!==sid,original);await page.waitForFunction(()=>state.sessions.length===2);
   const fork=await page.evaluate(()=>session);assert.notEqual(fork,original);
   assert.deepEqual(await page.evaluate(async sid=>await api('tree?session='+sid),original),source);

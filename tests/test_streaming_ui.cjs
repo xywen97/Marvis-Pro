@@ -5,7 +5,7 @@ const readline=require('node:readline');
 const assert=require('node:assert/strict');
 const path=require('node:path');
 async function run(){
- const fixture=spawn(path.join(__dirname,'../.venv/bin/python'),[path.join(__dirname,'streaming_fixture.py')],{stdio:['pipe','pipe','pipe']});
+ const fixture=spawn(path.join(__dirname,'../.venv/bin/python'),[path.join(__dirname,'streaming_fixture.py'),'--burst-tail'],{stdio:['pipe','pipe','pipe']});
  fixture.stderr.on('data',data=>process.stderr.write(data));let browser;
  try {
   const lines=readline.createInterface({input:fixture.stdout});
@@ -15,16 +15,28 @@ async function run(){
   await page.goto(data.url);await page.waitForFunction(()=>typeof liveConnected!=='undefined'&&liveConnected);
   await page.locator('#prompt').fill('请给出一段逐步生成的示例');await page.locator('#prompt').press('Enter');
   const bubble=page.locator('.message.assistant.streaming');await bubble.waitFor();
+  const originalBubble=await bubble.elementHandle();
+  assert.equal(await page.locator('.chat-trace .message').count(),0);
   const first=await bubble.locator('.message-content').textContent();assert(!first.includes('最后一段'));
   const samples=[];
+  await page.evaluate(()=>{
+   window.finishFrames=[];
+   new MutationObserver(()=>{
+    if(state.tasks[0]?.status==='completed')finishFrames.push(document.querySelector('.message.assistant .message-text')?.textContent||'');
+   }).observe(document.querySelector('#messages'),{subtree:true,childList:true,attributes:true,characterData:true});
+  });
   while(await bubble.count()){
    const text=await bubble.locator('.message-content').textContent().catch(()=>null);if(text)samples.push(text);
    await page.waitForTimeout(100);
   }
   assert(new Set(samples).size>=3,'must paint at least three different partial replies');
   const answer=page.locator('.message.assistant:not(.streaming)');await answer.waitFor();
+  assert(await originalBubble.evaluate(node=>node===document.querySelector('.message.assistant')),'streaming reply remains the same node at completion');
   assert((await answer.textContent()).includes('最后一段'));assert.equal(await answer.locator('pre code').textContent(),'print("逐步显示")\n');
-  assert.equal(await page.locator('.message.assistant').count(),1,'final reply replaces the pending bubble');
+  await page.waitForFunction(()=>{const body=document.querySelector('.message.assistant .message-text');return body&&body._shown===body._target;});
+  const finishFrames=await page.evaluate(()=>finishFrames);
+  assert(new Set(finishFrames).size>=2,'completion must continue revealing the burst tail instead of flushing it at once');
+  assert.equal(await page.locator('.message.assistant').count(),1,'completed reply must not duplicate its streaming bubble');
   assert.deepEqual(errors,[]);
   // Reconnection and the polling fallback must also show unfinished responses.
   await page.route('**/api/live',route=>route.abort());await page.evaluate(()=>liveAbort.abort());

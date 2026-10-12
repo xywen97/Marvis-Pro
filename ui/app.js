@@ -92,6 +92,22 @@ $('#chat-scroll').addEventListener('scroll',()=>{
  if(!scrollFrame){const box=$('#chat-scroll');followTail=box.scrollHeight-box.scrollTop-box.clientHeight<80;}
 },{passive:true});
 document.addEventListener('agent-content-resize',scrollTail);
+function messageSpec(key,message,{streaming=false,note=false,displayText=message.content}={}){
+ return {key,make:()=>{
+  const row=el('div','message '+message.role),body=el('div','message-body');
+  body.append(el('div','message-heading',message.role==='user'?'你':'MarvisXY'),el('div','message-text'));
+  row.append(el('div','message-avatar',message.role==='user'?'你':'✦'),body);return row;
+ },update:row=>{
+  row.classList.toggle('streaming',streaming);
+  row.classList.toggle('assistant-note',message.role==='assistant'&&note);
+  row.classList.toggle('assistant-response',message.role==='assistant'&&!note);
+  row.dataset.entryId=message.id||'';
+  const content=row.querySelector('.message-text');
+  if(message.role==='assistant')AgentProgress.text(content,displayText,streaming);
+  else if(content.textContent!==message.content)content.replaceChildren(el('div','message-content',message.content));
+  bubbleActions(row.querySelector('.message-body'),message.id,message.content);
+ }};
+}
 async function renderMessages() {
  updateComposer();
  const currentSession=session, version=++messageVersion;
@@ -102,25 +118,22 @@ async function renderMessages() {
  if(box.dataset.session!==String(session)){
   AgentProgress.release(box);box.replaceChildren();box.dataset.session=String(session);followTail=true;
  }
- const specs=[];
+ const specs=[],renderedAnswers=new Set();
+ const answers=new Map(messages.filter(message=>message.role==='assistant'&&message.task_id).map(message=>[message.task_id,message]));
  for(const message of messages){
-  specs.push({key:'message-'+message.id,make:()=>{
-   const row=el('div','message '+message.role),body=el('div','message-body');
-   body.append(el('div','message-heading',message.role==='user'?'你':'MarvisXY'),el('div','message-text'));
-   row.append(el('div','message-avatar',message.role==='user'?'你':'✦'),body);return row;
-  },update:row=>{
-   const content=row.querySelector('.message-text');
-   if(message.role==='assistant')AgentProgress.text(content,message.content);
-   else if(content.textContent!==message.content)content.replaceChildren(el('div','message-content',message.content));
-   bubbleActions(row.querySelector('.message-body'),message.id,message.content);
-  }});
+  if(renderedAnswers.has(message.id))continue;
+  specs.push(messageSpec('message-'+message.id,message));
   if(message.role==='user'&&tasks.has(message.task_id)){
    let task=tasks.get(message.task_id);
    if(message.event_cutoff!==undefined&&!busy(task))task={...task,branch_cutoff:true,events:task.events.filter(e=>e.id<=message.event_cutoff)};
-   specs.push({key:'trace-'+task.id,make:()=>el('div','agent-progress'),update:root=>{
-    AgentProgress.updateTrace(root,task);
-    root.querySelectorAll('.thought-bubble').forEach(note=>bubbleActions(note,note.dataset.entryId,note.dataset.content));
-   }});
+   const finalMessage=answers.get(task.id),conversation=AgentProgress.conversation(task,finalMessage);
+   if(conversation.finalRendered)renderedAnswers.add(finalMessage.id);
+   for(const item of conversation.items){
+    if(item.kind==='reply'){
+     const reply=item.message||{role:'assistant',id:item.event.kind==='assistant_note'?'event-'+item.event.id:null,content:item.event.content.text};
+     specs.push(messageSpec(item.key,reply,{streaming:item.streaming,note:item.note,displayText:item.event.content.text}));
+    }else specs.push({key:item.key,make:()=>el('div','agent-progress'),update:root=>AgentProgress.updateTrace(root,task,[item.group])});
+   }
   }
  }
  AgentProgress.sync(box,specs);scrollTail();

@@ -18,6 +18,9 @@ window.AgentProgress = (() => {
  }
  function text(body, value, animate = false) {
   body.classList.add('animated-text');body._stopped = false;
+  // Finishing a model turn must not flush the remaining characters at once.
+  // Keep the existing reveal loop until it catches up with the final target.
+  if(!animate&&body._animate&&value!==body._shown&&value.startsWith(body._shown||''))animate=true;
   if (body._target === value && body._animate === animate) return;
   body._target = value;body._animate = animate;
   if (!animate) {
@@ -88,28 +91,37 @@ window.AgentProgress = (() => {
    else if(tool.approval&&!tool.approved)payload.append(el('div','tool-payload-label','待确认操作'),el('pre','',JSON.stringify(tool.approval.content,null,2)));
   }
  }
- function updateTrace(root,task) {
+ function conversation(task, finalMessage) {
+  const groups=steps(task), latest=groups[groups.length-1]?.step;
+  const lastNote=groups.flatMap(group=>group.notes).at(-1);
+  const finalEvent=finalMessage&&lastNote?.kind==='assistant_stream'&&lastNote.content.text.trim()===finalMessage.content.trim()?lastNote:null;
+  const items=[];
+  for(const group of groups){
+   for(const event of group.notes)items.push({kind:'reply',key:`reply-${task.id}-${event.id}`,event,
+    message:event===finalEvent?finalMessage:null,
+    note:event.kind==='assistant_note'||group.tools.length>0,
+    streaming:busy(task)&&group.step===latest&&event.kind==='assistant_stream'});
+   if(group.tools.length||group.events.length)items.push({kind:'trace',key:`trace-${task.id}-${group.step}`,group});
+  }
+  return {items,finalRendered:!!finalEvent};
+ }
+ function updateTrace(root,task,groups=steps(task).filter(group=>group.tools.length||group.events.length)) {
   root.className='chat-trace agent-progress';
   if(!root.firstElementChild)root.append(el('div','progress-heading'),el('div','progress-steps'));
   root.firstElementChild.textContent=`${task.branch_cutoff?'历史截点':statuses[task.status]} · 执行过程`;
-  const groups=steps(task), latest=groups[groups.length-1]?.step;
+  const latest=steps(task).at(-1)?.step;
   sync(root.lastElementChild,groups.map(group=>({
    key:'step-'+group.step,
    make:()=>{const node=el('section','agent-step');node.append(el('div','step-heading'),el('div','step-content'));return node;},
    update:node=>{
     const active=busy(task)&&group.step===latest;node.classList.toggle('step-active',active);
-    const finishedReply=task.status==='completed'&&group.step===latest&&!group.tools.length&&group.notes.some(e=>e.kind==='assistant_stream');
-    node.firstElementChild.textContent=group.step?`Step ${group.step} · ${active?'处理中':finishedReply?'回复完成':'处理记录'}`:'工具执行';
-    const notes=group.notes.filter(e=>e.kind==='assistant_note'||group.tools.length||(busy(task)&&group.step===latest));
-    const items=notes.map(event=>({key:'note-'+event.id,
-     make:()=>{const note=el('div','thought-bubble message assistant');note.append(el('div','thought-heading','✦ 处理说明'),el('div','thought-text'));return note;},
-     update:note=>{const streaming=active&&event.kind==='assistant_stream';note.dataset.entryId=streaming?'':'event-'+event.id;note.dataset.content=event.content.text;note.classList.toggle('streaming',streaming);text(note.querySelector('.thought-text'),event.content.text,streaming);}
-    }));
+    node.firstElementChild.textContent=group.step?`Step ${group.step} · ${active?'处理中':'工具记录'}`:'工具执行';
+    const items=[];
     items.push(...group.tools.map(tool=>({key:'tool-'+tool.key,make:makeTool,update:node=>updateTool(node,tool,task)})));
     items.push(...group.events.map(event=>({key:'event-'+event.id,make:()=>el('div','progress-status'),update:node=>{node.textContent=event.content.text||event.content.action||event.kind;}})));
     sync(node.lastElementChild,items);
    }
   })));
  }
- return {sync,release,text,steps,updateTrace};
+ return {sync,release,text,steps,conversation,updateTrace};
 })();

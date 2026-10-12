@@ -9,6 +9,34 @@ from llm_client import LLMClient, ChatResult
 
 
 class ProgressTests(unittest.TestCase):
+    def test_interrupted_public_reply_is_saved_as_branchable_note(self):
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel), tempfile.TemporaryDirectory() as folder:
+                runtime=Runtime(folder)
+                def chat(messages,on_delta=None,**kwargs):
+                    on_delta('已经输出的处理说明')
+                    if cancel:
+                        ident=runtime.store.one("SELECT id FROM tasks WHERE status='running'")['id']
+                        runtime.cancel(ident)
+                    return ChatResult.failure('连接中断')
+                try:
+                    with patch.object(LLMClient,'configured',new_callable=lambda:property(lambda s:True)),patch.object(LLMClient,'chat',side_effect=chat):
+                        task=runtime.submit('请生成一段分析')
+                        deadline=time.time()+3
+                        while time.time()<deadline:
+                            row=runtime.store.one('SELECT * FROM tasks WHERE id=?',(task['id'],))
+                            if row['status'] in ('cancelled','failed'): break
+                            time.sleep(.01)
+                    self.assertEqual(row['status'],'cancelled' if cancel else 'failed')
+                    node=next(n for n in runtime.session_tree(task['session_id'])['nodes'] if n['kind']=='thinking')
+                    self.assertEqual(node['content'],'已经输出的处理说明');self.assertTrue(node['data']['partial'])
+                    deadline=time.time()+3
+                    while task['id'] in runtime.cancels:
+                        self.assertLess(time.time(),deadline);time.sleep(.01)
+                    fork=runtime.fork_session(task['session_id'],node['id'])
+                    self.assertEqual(runtime.session_tree(fork['session_id'])['nodes'][-1]['content'],node['content'])
+                finally:runtime.close()
+
     def test_dialog_shows_pending_tool_and_finished_result(self):
         runtime=Mock();runtime.sessions.return_value=[{'id':'session'}]
         runtime.messages.return_value=[{'role':'user','content':'检查磁盘','task_id':'task'}]

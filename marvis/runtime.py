@@ -435,15 +435,25 @@ class Runtime:
             self.store.add_message(session_id, 'assistant', reply, ident)
             self.status(ident, 'completed', reply); self.store.event(ident, 'completed', {'text': '任务完成'})
         except Cancelled as e:
+            self._preserve_partial_reply(ident)
             self.status(ident, 'cancelled', str(e)); self.store.add_message(session_id, 'assistant', str(e), ident)
             self.store.event(ident, 'cancelled', {'text': str(e)})
         except Exception as e:
+            self._preserve_partial_reply(ident)
             reply = '任务失败：' + str(e)
             self.status(ident, 'failed', reply); self.store.add_message(session_id, 'assistant', reply, ident)
             self.store.event(ident, 'failed', {'text': reply})
         finally:
             with self.lock:
                 self.approvals.pop(ident, None); self.cancels.pop(ident, None)
+
+    def _preserve_partial_reply(self, ident):
+        """Keep visible interrupted model text as a copyable, branchable note."""
+        for event in self.store.events(ident):
+            if event['kind'] != 'assistant_stream' or not event['content'].get('text'): continue
+            data = {**event['content'], 'partial': True}
+            self.store.execute("UPDATE events SET kind='assistant_note',content=? WHERE id=?", (json.dumps(data, ensure_ascii=False), event['id']))
+            self.store.record_event_entry(ident, event['id'], 'assistant_note', data)
 
     @staticmethod
     def bounded_context(messages, budget=120000):
