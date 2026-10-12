@@ -45,15 +45,22 @@ class Runtime:
     def settings(self):
         base = self.base_model
         saved = self.store.setting('model', {})
-        return {'mode': self.store.setting('mode', 'efficiency'), 'roots': self.store.setting('roots', [str(Path.cwd())]),
+        return {'mode': self.store.setting('mode', 'efficiency'), 'approval_policy': self.store.setting('approval_policy', 'auto'), 'roots': self.store.setting('roots', [str(Path.cwd())]),
                 'model': {'base_url': saved.get('base_url', base.base_url), 'model': saved.get('model', base.model),
                           'configured': bool((saved.get('base_url', base.base_url)) and saved.get('model', base.model)),
                           'has_key': bool(base.api_key)}, 'offline': self.offline,
                 'data_dir': str(self.store.directory)}
 
     def update_settings(self, values):
+        with self.lock:
+            return self._update_settings(values)
+
+    def _update_settings(self, values):
         if self.store.one("SELECT id FROM tasks WHERE status IN ('queued','running','waiting_approval')"):
             raise ValueError('请先等待或取消正在执行的任务，再修改设置。')
+        if 'approval_policy' in values:
+            if values['approval_policy'] not in ('ask', 'auto', 'full'):
+                raise ValueError('无效审批模式。')
         if 'roots' in values:
             roots = values['roots']
             if not isinstance(roots, list) or not roots: raise ValueError('至少需要一个授权目录。')
@@ -75,6 +82,8 @@ class Runtime:
             parsed = urllib.parse.urlparse(url)
             if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password: raise ValueError('模型端点必须是 HTTP(S) 地址。')
             self.store.set_setting('model', {'base_url': url, 'model': str(model.get('model', '')).strip()})
+        if 'approval_policy' in values:
+            self.store.set_setting('approval_policy', values['approval_policy'])
         return self.settings()
 
     def model(self, settings):
@@ -384,7 +393,9 @@ class Runtime:
         try:
             validate_arguments(name, args)
             plan = None
-            if name in MUTATIONS:
+            policy = caps.approval_policy
+            requires_approval = (name in MUTATIONS and policy != 'full') or (policy == 'ask' and name in {'web_search', 'browser_read'})
+            if name in MUTATIONS or requires_approval:
                 # Rejection is an engine rule, including changed arguments and
                 # another call in the same provider batch; never re-prompt.
                 if any(e['kind'] == 'rejected' and e['content'].get('tool') == name for e in self.store.events(ident)):
@@ -392,6 +403,7 @@ class Runtime:
                     self.store.event(ident, 'rejected', {'agent': group, 'tool': name, 'result': out, **context})
                     return out
                 plan = caps.preview(name, args)
+            if requires_approval:
                 pending = {'plan': {'tool': name, **plan}, 'approved': False, 'event': threading.Event()}
                 with self.lock: self.approvals[ident] = pending
                 self.status(ident, 'waiting_approval'); self.store.event(ident, 'approval', {**pending['plan'], **context})
@@ -451,7 +463,7 @@ class Runtime:
         try:
             self._check(ident); self.status(ident, 'running')
             self.store.event(ident, 'planning', {'agent': 'main', 'text': '理解目标并选择工具'})
-            caps = Capabilities(self.store, lambda: self._check(ident), settings['mode'] == 'local')
+            caps = Capabilities(self.store, lambda: self._check(ident), settings['mode'] == 'local', settings.get('approval_policy', 'auto'))
             # Explicit tools and offline shortcuts stay deterministic. Online
             # natural-language tasks go through the independent main/worker loop.
             direct = action or (self.direct(prompt, settings['roots']) if self.offline or prompt.startswith('/tool ') else None)

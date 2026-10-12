@@ -71,6 +71,7 @@ function renderState() {
  if(!$('#index-path').value)$('#index-path').value=state.settings.roots[0];
  renderSessionList();
  updateComposer();
+ renderPermissions();
  const active=state.tasks.filter(busy);
  MarvisTeam.render(state);
  const visible=active.find(t=>t.session_id===session), indicator=$('#active-task');indicator.classList.toggle('hidden',!visible);if(visible){indicator.replaceChildren(el('span','',statuses[visible.status]+' · '+visible.prompt.slice(0,40)),btn('停止',()=>api('cancel',{id:visible.id})));}
@@ -80,6 +81,31 @@ function renderState() {
  if(pending&&approvalId!==pending.id){approvalId=pending.id;$('#approval-plan').textContent=JSON.stringify(pending.approval,null,2);if(!$('#approval-dialog').open)$('#approval-dialog').showModal();}
  if(!pending&&approvalId){approvalId=null;$('#approval-dialog').close();}
 }
+const permissionLabels={ask:'请求批准',auto:'帮我批准',full:'完全访问权限'};
+function renderPermissions(){
+ const policy=state.settings.approval_policy||'auto',pending=state.tasks.some(busy);
+ $('#permission-label').textContent=permissionLabels[policy];
+ $('#permission-control').dataset.policy=policy;
+ $('#permission-toggle').setAttribute('aria-disabled',String(pending));
+ $('#permission-toggle').title=pending?'任务完成或取消后可修改审批模式':'选择审批模式';
+ document.querySelectorAll('[data-permission]').forEach(button=>{
+  button.setAttribute('aria-checked',String(button.dataset.permission===policy));button.disabled=pending;
+ });
+ $('#approval-note').textContent={ask:'所有操作均有执行记录 · 文件变更和联网前询问',auto:'所有操作均有执行记录 · 有风险的操作先询问',full:'所有操作均有执行记录 · 完全访问权限'}[policy];
+}
+$('#permission-toggle').onclick=event=>{if(state?.tasks.some(busy))event.preventDefault();};
+document.querySelectorAll('[data-permission]').forEach(button=>button.onclick=()=>safe(async()=>{
+ await api('settings',{approval_policy:button.dataset.permission});
+ $('#permission-control').open=false;await refresh();$('#permission-toggle').focus();
+}));
+document.addEventListener('click',event=>{if(!$('#permission-control').contains(event.target))$('#permission-control').open=false;});
+$('#permission-control').addEventListener('keydown',event=>{
+ if(event.key==='Escape'){event.preventDefault();$('#permission-control').open=false;$('#permission-toggle').focus();}
+ if(event.target.matches('[data-permission]')&&['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+  event.preventDefault();const options=[...document.querySelectorAll('[data-permission]')],index=options.indexOf(event.target);
+  options[event.key==='Home'?0:event.key==='End'?options.length-1:(index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length].focus();
+ }
+});
 let followTail=true, scrollFrame=null;
 function scrollTail() {
  if(!followTail||scrollFrame)return;

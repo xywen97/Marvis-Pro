@@ -219,8 +219,9 @@ class SearchResults(HTMLParser):
 class Capabilities(FileTools, CodingTools):
     _app_cache = None
     _app_lock = threading.Lock()
-    def __init__(self, store, check=lambda: None, local=False):
+    def __init__(self, store, check=lambda: None, local=False, approval_policy=None):
         self.store, self.check, self.local = store, check, local
+        self.approval_policy = approval_policy or store.setting('approval_policy', 'auto')
         self._roots_revision = -1; self._roots = []
 
     def path(self, value):
@@ -229,7 +230,7 @@ class Capabilities(FileTools, CodingTools):
             if self._roots_revision != self.store.settings_revision:
                 self._roots = [Path(r).expanduser().resolve() for r in self.store.setting('roots', [str(Path.cwd())])]
                 self._roots_revision = self.store.settings_revision
-        if not any(p == r or r in p.parents for r in self._roots):
+        if self.approval_policy != 'full' and not any(p == r or r in p.parents for r in self._roots):
             raise PermissionError('目录未授权，请先在设置中添加：' + str(p))
         if any(part in SKIP or part.startswith('.env') for part in p.parts):
             raise PermissionError('凭据、内部数据和隐藏配置目录不允许读取或修改。')

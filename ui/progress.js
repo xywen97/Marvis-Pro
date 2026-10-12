@@ -109,15 +109,43 @@ window.AgentProgress = (() => {
   }
   return {items,finalRendered:!!finalEvent};
  }
+ function paintDuration(node, now=Date.now()/1000) {
+  const start=Number(node.dataset.start),end=node.dataset.end?Number(node.dataset.end):now;
+  const seconds=Math.max(0,Math.floor(end-start));
+  const hours=Math.floor(seconds/3600),minutes=Math.floor(seconds%3600/60),rest=seconds%60;
+  node.textContent='用时 '+(hours?`${hours}小时 `:'')+(minutes?`${minutes}分钟 `:'')+`${rest}秒`;
+ }
+ function updateDuration(node,task,groups) {
+  const events=groups.flatMap(group=>[group.model,...group.notes,...group.events,
+   ...group.tools.flatMap(tool=>[tool.stream,tool.start,tool.approval,tool.approved,tool.result])]).filter(Boolean);
+  const times=events.map(event=>event.created).filter(time=>typeof time==='number'&&Number.isFinite(time));
+  node.hidden=!times.length;
+  delete node.dataset.start;delete node.dataset.end;
+  if(node.hidden){node.textContent='';return;}
+  node.dataset.start=Math.min(...times);
+  const pending=groups.some(group=>group.tools.some(tool=>!tool.result));
+  const last=groups.at(-1)?.step===steps(task).at(-1)?.step;
+  const running=busy(task)&&!task.branch_cutoff&&last&&pending;
+  const stopped=task.events.filter(event=>['failed','cancelled','cancel_requested'].includes(event.kind))
+   .map(event=>event.created).filter(time=>typeof time==='number'&&Number.isFinite(time));
+  if(!running)node.dataset.end=Math.max(...times,...(pending&&last?stopped:[]));
+  paintDuration(node);
+ }
+ // Update only the clocks still mounted in the conversation, without rebuilding traces.
+ const durationTimer=setInterval(()=>{
+  document.querySelectorAll('.trace-duration[data-start]:not([data-end])').forEach(node=>paintDuration(node));
+ },1000);
+ window.addEventListener('pagehide',()=>clearInterval(durationTimer));
  function updateTrace(root,task,groups=steps(task).filter(group=>group.tools.length||group.events.length)) {
   root.className='chat-trace agent-progress';
   if(!root.firstElementChild){
    const detail=el('details','trace-details'),heading=el('summary','progress-heading');
-   heading.append(el('span','trace-label'),el('span','trace-preview'));
+   heading.append(el('span','trace-label'),el('span','trace-preview'),el('span','trace-duration'));
    detail.append(heading,el('div','progress-steps'));root.append(detail);
    detail.addEventListener('toggle',()=>document.dispatchEvent(new Event('agent-content-resize')));
   }
   const detail=root.firstElementChild;
+  updateDuration(detail.querySelector('.trace-duration'),task,groups);
   const tools=groups.flatMap(group=>group.tools);
   const errors=tools.filter(tool=>tool.result?.kind==='tool_error'||tool.result?.content.result?.error||tool.result?.content.result?.status==='failed').length;
   const pendingTools=tools.some(tool=>!tool.result);

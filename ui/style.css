@@ -46,6 +46,7 @@
 .trace-details>.progress-heading:focus-visible{outline:2px solid #6684ff;outline-offset:4px;border-radius:3px}
 .trace-preview{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-left:10px;overflow-wrap:anywhere}
 .trace-preview:empty{display:none}
+.trace-duration{float:right;margin-left:12px;color:#909aa8;font-variant-numeric:tabular-nums;white-space:nowrap}
 .agent-step{border-left:1px solid #e1e6ed;padding-left:16px;margin:0 0 16px;animation:step-arrive .18s ease-out}
 .agent-tool{margin:8px 0 12px;color:#949ca8}
 .tool-line{display:flex;align-items:center;gap:8px;font-size:12px;color:#919ba8;line-height:1.8}
@@ -111,7 +112,7 @@
 .message-time{margin-left:8px;font-size:11px;line-height:1;color:#8c939e;white-space:nowrap;font-variant-numeric:tabular-nums;align-self:center}
 .message-time[hidden]{display:none}
 .messages>.assistant-note{position:relative}
-.messages>.assistant-note .bubble-actions{position:absolute;right:0;top:100%;height:24px;margin-top:2px;opacity:0;transition:opacity .15s}
+.messages>.assistant-note .bubble-actions{position:static;justify-content:flex-start;height:24px;margin-top:2px;opacity:0;transition:opacity .15s}
 .messages>.assistant-note .bubble-actions button{height:24px}
 .messages>.assistant-note:hover .bubble-actions,.messages>.assistant-note:focus-within .bubble-actions{opacity:.6}
 .messages>.assistant-note .bubble-actions:hover,.messages>.assistant-note .bubble-actions:focus-within{opacity:1}
@@ -135,3 +136,32 @@
  .messages .message-content{font-size:14px}
 }
 @media(hover:none){.messages>.assistant-note .bubble-actions{position:static;margin-top:4px;opacity:.6}}
+
+.permission-control{position:relative;flex-shrink:0}
+.permission-control>summary{display:flex;align-items:center;gap:6px;list-style:none;cursor:pointer;border-radius:18px;padding:6px 10px;background:#f3f5f7;color:#677484;font-size:11px;white-space:nowrap}
+.permission-control>summary::-webkit-details-marker{display:none}
+.permission-control>summary:hover{background:#eaf0f7}
+.permission-control>summary:focus-visible{outline:2px solid #6d92ff;outline-offset:2px}
+.permission-control>summary[aria-disabled=true]{opacity:.5;cursor:default}
+.permission-symbol{font-size:17px;line-height:1;flex:0 0 20px;text-align:center}
+.permission-menu{position:absolute;bottom:calc(100% + 12px);left:0;width:420px;max-width:calc(100vw - 110px);padding:16px 10px 10px;background:white;border:1px solid #e1e5ea;border-radius:20px;box-shadow:0 12px 36px #202c3d14;z-index:12;max-height:60vh;overflow-y:auto}
+.permission-title{margin:0 12px 12px;font-size:13px;font-weight:500;color:#89909a}
+.permission-menu button{display:flex;align-items:center;gap:12px;width:100%;border:0;border-radius:12px;padding:12px;text-align:left;background:transparent}
+.permission-menu button:hover,.permission-menu button:focus-visible{background:#f5f7fa}
+.permission-menu button>span:nth-child(2){flex:1;min-width:0}
+.permission-menu strong{display:block;font-size:14px;font-weight:600;margin-bottom:5px}
+.permission-menu small{display:block;font-size:12px;line-height:1.6;color:#9298a1}
+.permission-check{visibility:hidden;font-size:17px}
+.permission-menu [aria-checked=true] .permission-check{visibility:visible}
+.permission-menu [data-permission=full],.permission-control[data-policy=full]>summary{color:#df702f}
+.permission-menu [data-permission=full] small{color:#c97a4e}
+.permission-note{font-size:10px;line-height:1.7;color:#8b95a3;border-top:1px solid var(--line);padding:10px 12px 0;margin:8px 0 0}
+@media(max-width:650px){
+ .composer-bottom{gap:6px;flex-wrap:wrap}
+ .composer-bottom>#model-label{display:none}
+ .composer-bottom>.send{margin-left:auto}
+ .permission-menu{left:-75px;max-width:calc(100vw - 92px)}
+ .permission-menu button{gap:8px;padding:10px 8px}
+ .permission-menu strong{font-size:13px}
+ .permission-menu small{font-size:11px}
+}

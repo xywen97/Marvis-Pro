@@ -79,6 +79,38 @@ async function run(){
   });
   assert.equal(previewChecks.truncated,'分配任务');
   assert.equal(previewChecks.next,'汇总任务结果');assert(previewChecks.stable);assert.equal(previewChecks.completed,'');
+  const durationChecks=await page.evaluate(()=>{
+   const root=document.createElement('div');document.body.append(root);
+   const task={status:'running',events:[
+    {id:1,kind:'model_start',created:100,content:{step:1}},
+    {id:2,kind:'tool_start',created:102,content:{step:1,call_id:'a',tool:'agent_dispatch',arguments:{}}}]};
+   AgentProgress.updateTrace(root,task);
+   const clock=root.querySelector('.trace-duration'),detail=root.firstElementChild;
+   detail.open=true;
+   const live=!clock.hidden&&!clock.hasAttribute('data-end');
+   task.events.push({id:3,kind:'tool_result',created:165,content:{step:1,call_id:'a',result:{}}});
+   task.status='completed';AgentProgress.updateTrace(root,task);
+   const completed=clock.textContent,stable=root.firstElementChild===detail&&detail.open;
+   task.events.push({id:4,kind:'model_start',created:200,content:{step:2}},
+    {id:5,kind:'tool_start',created:201,content:{step:2,call_id:'b',tool:'agent_report',arguments:{}}},
+    {id:6,kind:'tool_result',created:385,content:{step:2,call_id:'b',result:{}}});
+   const labels=AgentProgress.steps(task).map(group=>{
+    AgentProgress.updateTrace(root,task,[group]);return clock.textContent;
+   });
+   task.status='cancelled';task.events.pop();
+   task.events.push({id:7,kind:'cancelled',created:265,content:{step:2}});
+   AgentProgress.updateTrace(root,task,[AgentProgress.steps(task).at(-1)]);
+   const cancelled=clock.textContent;
+   task.branch_cutoff=true;task.events=task.events.slice(0,2);
+   AgentProgress.updateTrace(root,task);const branch=clock.textContent;
+   task.events.forEach(event=>delete event.created);AgentProgress.updateTrace(root,task);
+   const missing=clock.hidden;root.remove();return {live,completed,stable,labels,cancelled,branch,missing};
+  });
+  assert(durationChecks.live&&durationChecks.stable&&durationChecks.missing);
+  assert.equal(durationChecks.completed,'用时 1分钟 5秒');
+  assert.deepEqual(durationChecks.labels,['用时 1分钟 5秒','用时 3分钟 5秒']);
+  assert.equal(durationChecks.cancelled,'用时 1分钟 5秒');
+  assert.equal(durationChecks.branch,'用时 2秒');
   const statusChecks=await page.evaluate(()=>{
    const root=document.createElement('div');document.body.append(root);
    const task={status:'failed',events:[
@@ -143,6 +175,27 @@ async function run(){
   assert(await thought.isVisible());assert(await response.isVisible());
   await page.evaluate(()=>document.body.classList.remove('hide-traces'));
   assert.equal(await tools.count(),3);assert.deepEqual(errors,[]);
+  for(const width of [1380,600]){
+   await page.setViewportSize({width,height:1000});
+   await thought.hover();
+   const layout=await thought.evaluate(node=>{
+    const actions=node.querySelector('.bubble-actions').getBoundingClientRect();
+    const heading=node.nextElementSibling.querySelector('.progress-heading').getBoundingClientRect();
+    const duration=node.nextElementSibling.querySelector('.trace-duration').getBoundingClientRect();
+    return {actionsBottom:actions.bottom,headingTop:heading.top,durationTop:duration.top};
+   });
+   assert(layout.actionsBottom<=layout.headingTop,'message actions must reserve space above the execution heading');
+   assert(layout.actionsBottom<=layout.durationTop,'execution time must not overlap copy, branch, or message time');
+   for(const reply of [thought,response]){
+    const aligned=await reply.evaluate(node=>{
+     const text=node.querySelector('.message-text').getBoundingClientRect();
+     const copy=node.querySelector('.bubble-actions button').getBoundingClientRect();
+     return Math.abs(text.left-copy.left)<1;
+    });
+    assert(aligned,'Agent reply actions must align with the left edge of the text');
+   }
+  }
+  await page.setViewportSize({width:1380,height:1000});
   await page.evaluate(()=>{document.querySelector('.tool-details').open=false;document.querySelector('#chat-scroll').scrollTop=0;followTail=false;});
   await page.screenshot({path:'/tmp/marvis-agent-steps.png'});
   const original=await page.evaluate(()=>session);const source=await page.evaluate(async()=>await api('tree?session='+session));

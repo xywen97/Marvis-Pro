@@ -46,6 +46,43 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(len(self.runtime.messages(sid)), 2)
         self.assertEqual(self.runtime.snapshot()['knowledge_count'], 1)
 
+    def test_approval_modes_and_full_access(self):
+        self.assertEqual(self.runtime.settings()['approval_policy'], 'auto')
+        outside = self.root / 'outside.txt'; outside.write_text('普通文件')
+        with self.assertRaises(PermissionError): Capabilities(self.runtime.store).read(str(outside))
+        self.runtime.update_settings({'approval_policy': 'full'})
+        self.assertEqual(Capabilities(self.runtime.store).read(str(outside)), '普通文件')
+        target = self.root / 'created.txt'
+        task = self.submit('file_write', {'path': str(target), 'text': '无需审批'})
+        self.assertEqual(self.wait(task)['status'], 'completed')
+        self.assertEqual(target.read_text(), '无需审批')
+        self.assertFalse(any(e['kind'] == 'approval' for e in self.runtime.store.events(task['id'])))
+        (self.root / '.env').write_text('secret')
+        with self.assertRaises(PermissionError): Capabilities(self.runtime.store).read(str(self.root / '.env'))
+        with self.assertRaises(PermissionError): Capabilities(self.runtime.store).path(str(self.runtime.store.directory))
+        with self.assertRaises(PermissionError): Capabilities(self.runtime.store, local=True).execute('web_search', {'query': 'x'})
+        self.runtime.close()
+        self.runtime = Runtime(self.root / 'data', offline=True, config={'evaluation': {'enabled': False}})
+        self.assertEqual(self.runtime.settings()['approval_policy'], 'full')
+        self.runtime.update_settings({'approval_policy': 'auto'})
+        with self.assertRaises(PermissionError): Capabilities(self.runtime.store).read(str(outside))
+        with self.assertRaises(ValueError): self.runtime.update_settings({'approval_policy': 'invalid'})
+
+    def test_ask_mode_confirms_network_and_preserves_rejection(self):
+        self.runtime.update_settings({'approval_policy': 'ask'})
+        with patch.object(Capabilities, 'execute', return_value={'text': 'offline fixture'}) as execute:
+            task = self.submit('browser_read', {'url': 'https://example.com'})
+            self.wait(task, ('waiting_approval',))
+            execute.assert_not_called()
+            with self.assertRaises(ValueError): self.runtime.update_settings({'approval_policy': 'full'})
+            self.runtime.approve(task['id'], False)
+            self.assertEqual(self.wait(task)['status'], 'completed')
+            execute.assert_not_called()
+            task = self.submit('browser_read', {'url': 'https://example.com'})
+            self.wait(task, ('waiting_approval',)); self.runtime.approve(task['id'], True)
+            self.assertEqual(self.wait(task)['status'], 'completed')
+            execute.assert_called_once()
+
     def test_paths_symlinks_and_internal_data_denied(self):
         outside = self.root / 'secret.txt'; outside.write_text('private')
         link = self.work / 'link.txt'; link.symlink_to(outside)
