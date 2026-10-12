@@ -85,3 +85,12 @@
 .command-dialog{width:min(760px,90vw)}.command-dialog pre{max-height:65vh;overflow:auto;white-space:pre-wrap}
 .clipboard-fallback{position:fixed;left:-10000px;top:0}
 .hide-traces .agent-progress{display:none}
+
+.session-entry>.session{display:flex;align-items:center;gap:8px}
+.session-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-indicator{display:inline-block;flex:0 0 11px;width:11px;height:11px;border:1px dotted currentColor;border-radius:50%;opacity:.65}
+.session-spinner{border:2px solid #cbd8fa;border-top-color:#386cf5;border-right-color:#386cf5;opacity:1;animation:session-spin .8s linear infinite}
+.session-entry[data-activity=waiting_approval] .session-indicator{border:0;border-radius:0;color:#b58a43;font-size:11px;font-weight:700;line-height:11px;opacity:1}
+.session-entry[data-activity=queued] .session-indicator{border-style:solid;color:#8399c4}
+@keyframes session-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.session-spinner{animation:none}}

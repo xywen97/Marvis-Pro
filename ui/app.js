@@ -186,15 +186,22 @@ setInterval(()=>{MarvisTeam.render(state);if(page==='office')MarvisOffice.render
 
 function allSessions(){return [...(state?.sessions||[]),...(state?.archived_sessions||[])];}
 function renderSessionList(){
- if(!changed('sessions',[state.sessions,state.archived_sessions,session,showArchived,state.tasks.filter(busy).map(t=>t.session_id)]))return;
+ if(!changed('sessions',[state.sessions,state.archived_sessions,session,showArchived,state.tasks.filter(busy).map(t=>[t.session_id,t.status])]))return;
  $('#session-list-title').textContent=showArchived?'已归档对话':'最近对话';
  $('#session-archive-toggle').textContent=showArchived?'返回最近':'已归档';
  const box=$('#sessions');box.replaceChildren();
  for(const s of visibleSessions()){
   const row=el('div','session-entry'+(session===s.id?' selected':''));row.dataset.session=s.id;
-  const open=btn('◌  '+s.title,async()=>{session=s.id;showPage('chat');await renderMessages();renderState();},'session'+(session===s.id?' selected':''));row.append(open);
+  const tasks=state.tasks.filter(t=>t.session_id===s.id&&busy(t));
+  const active=tasks.find(t=>t.status==='running')||tasks.find(t=>t.status==='waiting_approval')||tasks[0];
+  const activity=active?.status||'idle';row.dataset.activity=activity;
+  const open=btn('',async()=>{session=s.id;showPage('chat');await renderMessages();renderState();},'session'+(session===s.id?' selected':''));
+  const indicator=el('span','session-indicator'+(activity==='running'?' session-spinner':''),activity==='waiting_approval'?'Ⅱ':'');
+  indicator.setAttribute('aria-hidden','true');
+  open.append(indicator,el('span','session-title',s.title));
+  open.title=s.title+(active?' · '+statuses[activity]:'');open.setAttribute('aria-label',open.title);row.append(open);
   const menu=el('details','session-menu'),trigger=el('summary','','⋯');trigger.setAttribute('aria-label','管理对话：'+s.title);menu.append(trigger);
-  const actions=el('div','session-menu-actions');const running=state.tasks.some(t=>t.session_id===s.id&&busy(t));
+  const actions=el('div','session-menu-actions');const running=!!active;
   const archive=btn(s.archived?'恢复对话':'归档对话',()=>manageSession(s.id,s.archived?'restore':'archive'));
   const remove=btn('删除对话',()=>{deletingSession=s.id;$('#session-delete-description').textContent='“'+s.title+'”';$('#session-delete-dialog').showModal();},'danger');
   for(const action of [archive,remove]){action.disabled=running;if(running)action.title='请等待或停止正在执行的任务';actions.append(action);}
