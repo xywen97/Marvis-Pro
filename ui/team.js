@@ -10,7 +10,7 @@ window.MarvisTeam = (() => {
  let initialized=false, owner='main', currentId=null, flight=null, queue=[], reduced=matchMedia('(prefers-reduced-motion: reduce)');
  const seen=new Map();let seeded=false, renderedSession;
  function init(snapshot){
-  if(initialized)return;initialized=true;const box=$('#agents');$('.team-heading span').textContent=snapshot.agents.length;box.classList.add('animated-team');
+  if(initialized)return;initialized=true;const box=$('#agents');box.classList.add('animated-team');
   for(const agent of snapshot.agents){
    const row=el('button','agent-row team-agent team-'+agent.id);row.type='button';row.dataset.agent=agent.id;
    row.style.setProperty('--cat-delay',(-snapshot.agents.indexOf(agent)*.73-1)+'s');
@@ -18,7 +18,7 @@ window.MarvisTeam = (() => {
    const art=el('div','agent-avatar');art.innerHTML=avatar;
    const info=el('div','agent-info');info.append(el('strong','',agent.name),el('small','',agent.role));
    const meter=el('div','context-meter'),caption=el('div','context-caption');
-   caption.append(el('span','','Context'),el('span','context-value'));
+   caption.append(el('span','','Context'),el('span','context-percent'),el('span','context-value'));
    const track=el('div','context-track');track.setAttribute('role','progressbar');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');
    track.append(el('span','context-fill'));meter.append(caption,track);info.append(meter);
    row.append(art,info,el('span','agent-status','待命'));row.onclick=()=>{
@@ -74,15 +74,16 @@ window.MarvisTeam = (() => {
   const edge=queue.shift(),from=box.querySelector(`[data-agent="${edge.from}"] .agent-avatar`),to=box.querySelector(`[data-agent="${edge.to}"] .agent-avatar`);
   if(!from||!to){play();return;}
   const bounds=box.getBoundingClientRect(),a=from.getBoundingClientRect(),b=to.getBoundingClientRect();
-  const x=a.left+a.width/2-bounds.left,y1=a.top+a.height/2-bounds.top,y2=b.top+b.height/2-bounds.top;
+  const x1=a.left+a.width/2-bounds.left,x2=b.left+b.width/2-bounds.left,y1=a.top+a.height/2-bounds.top,y2=b.top+b.height/2-bounds.top;
   const overlay=box.querySelector('.team-route');overlay.setAttribute('viewBox',`0 0 ${bounds.width} ${bounds.height}`);
-  overlay.querySelector('path').setAttribute('d',`M ${x} ${y1} C ${x+20} ${y1} ${x+20} ${y2} ${x} ${y2}`);
+  overlay.querySelector('path').setAttribute('d',`M ${x1} ${y1} C ${x1+20} ${y1} ${x2+20} ${y2} ${x2} ${y2}`);
   box.dataset.handoff=`${edge.from}:${edge.to}`;overlay.classList.add('visible');
   const marker=box.querySelector('.team-transfer');marker.classList.add('visible');
   const frames=[];
   for(let i=0;i<=20;i++){
    const t=i/20,curve=3*(1-t)*t*20,pos=y1+(y2-y1)*(3*t*t-2*t*t*t);
-   frames.push({transform:`translate(${x+curve-7}px,${pos-7}px) scale(${i===0||i===20?.7:1})`,offset:t});
+   const eased=3*t*t-2*t*t*t;
+   frames.push({transform:`translate(${x1+(x2-x1)*eased+curve-7}px,${pos-7}px) scale(${i===0||i===20?.7:1})`,offset:t});
   }
   const duration=queue.length>3?260:560;
   flight=marker.animate(frames,{duration,easing:'linear',fill:'forwards'});
@@ -101,12 +102,23 @@ window.MarvisTeam = (() => {
   const meter=row.querySelector('.context-meter'),track=meter.querySelector('.context-track');
   meter.dataset.pressure=percent>=95?'high':percent>=80?'medium':'low';
   meter.querySelector('.context-value').textContent=reading?`${tokenLabel(used)} / ${tokenLabel(capacity)} · ${percent.toFixed(1)}%`:`未采样 / ${tokenLabel(capacity)}`;
+  meter.querySelector('.context-percent').textContent=reading?`${percent.toFixed(1)}%`:'未采样';
   track.querySelector('.context-fill').style.width=`${level}%`;
   if(reading)track.setAttribute('aria-valuenow',level.toFixed(1));else track.removeAttribute('aria-valuenow');
   track.setAttribute('aria-label',`${row.querySelector('strong').textContent}上下文占用`);
   track.setAttribute('aria-valuetext',reading?`估算 ${used.toLocaleString()} / ${capacity.toLocaleString()} tokens，占用 ${percent.toFixed(1)}%`:`尚未采样，窗口容量 ${capacity.toLocaleString()} tokens`);
   const trigger=reading?.trigger_tokens||snapshot.context_policy?.trigger_tokens||capacity;
   meter.title=`${reading?'最近采样的上下文占用（估算）':'当前对话尚无模型用量采样'}\n${used.toLocaleString()} / ${capacity.toLocaleString()} tokens\n摘要触发值：${trigger.toLocaleString()} tokens\n模型：${reading?.model||snapshot.context_policy?.model||'当前模型'}`;
+ }
+ function actionLabel(item,agent){
+  if(item.mode==='coordinating')return '正在协调团队协作';
+  if(item.mode==='waiting')return '等待你的操作确认';
+  if(item.mode==='thinking')return item.stage==='reviewing'?'正在核对执行结果':item.stage==='context'?'正在整理上下文':'正在分析任务';
+  if(item.mode==='working'){
+   const tool=item.tool||'';
+   return tool.startsWith('system_')?'正在检查电脑状态':tool.startsWith('file_')?'正在处理文件':tool.startsWith('browser_')?'正在浏览网页':tool.startsWith('app_')?'正在操作应用':tool.includes('search')?'正在检索信息':'正在执行任务';
+  }
+  return agent.role;
  }
  function render(snapshot){
   if(!snapshot)return;
@@ -124,10 +136,17 @@ window.MarvisTeam = (() => {
    }
   }
   if(Object.entries(modes).some(([id,item])=>id!=='main'&&['working','thinking'].includes(item.mode))&&modes.main.mode==='thinking')modes.main={...modes.main,mode:'coordinating'};
+  const activeCount=Object.values(modes).filter(item=>['thinking','working','coordinating'].includes(item.mode)).length;
+  const waitingCount=Object.values(modes).filter(item=>item.mode==='waiting').length;
+  const overview=$('.team-heading span');overview.textContent=activeCount?`${activeCount} 位处理中`:waitingCount?'等待确认':'团队待命';overview.dataset.active=String(activeCount>0);
+  $('.team-subtitle').textContent=`${snapshot.agents.length} 位成员 · 一个目标，各有所长`;
   for(const row of document.querySelectorAll('.team-agent')){
    const item=modes[row.dataset.agent];if(row.dataset.mode!==item.mode)row.dataset.mode=item.mode;
+   const agent=snapshot.agents.find(a=>a.id===row.dataset.agent);
+   const description=actionLabel(item,agent);row.querySelector('.agent-info small').textContent=description;
+   row.querySelector('.agent-info small').title=description;
    row.querySelector('.agent-status').textContent=labels[item.mode];
-   row.setAttribute('aria-label',snapshot.agents.find(a=>a.id===row.dataset.agent).name+' · '+labels[item.mode]);
+   row.setAttribute('aria-label',agent.name+' · '+labels[item.mode]+' · '+description);
    updateContext(row,snapshot,session);
   }
   const task=snapshot.tasks.find(t=>['running','waiting_approval'].includes(t.status));

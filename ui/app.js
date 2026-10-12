@@ -194,7 +194,8 @@ function allSessions(){return [...(state?.sessions||[]),...(state?.archived_sess
 function renderSessionList(){
  if(!changed('sessions',[state.sessions,state.archived_sessions,session,showArchived,state.tasks.filter(busy).map(t=>[t.session_id,t.status])]))return;
  $('#session-list-title').textContent=showArchived?'已归档对话':'最近对话';
- $('#session-archive-toggle').textContent=showArchived?'返回最近':'已归档';
+ $('#session-archive-toggle').classList.toggle('active',showArchived);
+ $('#session-archive-toggle').setAttribute('aria-pressed',String(showArchived));
  const box=$('#sessions');box.replaceChildren();
  for(const s of visibleSessions()){
   const row=el('div','session-entry'+(session===s.id?' selected':''));row.dataset.session=s.id;

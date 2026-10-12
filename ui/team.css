@@ -29,3 +29,37 @@ body.office-view .team-panel *{animation-play-state:paused!important}
 @keyframes team-head-work{0%,100%{transform:rotate(-1deg)}50%{transform:translateY(.5px) rotate(2deg)}}
 
 .team-evaluation .team-scarf{fill:#a4b878}
+
+/* Compact team console: commander card followed by a quiet member roster. */
+.team-panel{padding:26px 16px 18px;background:linear-gradient(180deg,#fafcff 0,#fff 220px)}
+.team-heading{gap:6px}.team-heading strong{font-size:13px;letter-spacing:.2px;white-space:nowrap}
+.team-heading>span{display:inline-flex;align-items:center;gap:4px;background:#f0f5f4;color:#78968b;font-size:8px;padding:4px 6px;border-radius:20px;white-space:nowrap}
+.team-heading>span:before{content:'';width:4px;height:4px;border-radius:50%;background:#91b3a3}
+.team-heading>span[data-active=true]{background:#eaf1ff;color:#6387ca}.team-heading>span[data-active=true]:before{background:#7499e2;animation:team-status-pulse 1.8s ease-in-out infinite}
+.team-subtitle{font-size:9px;margin:9px 0 18px;color:#98a7bb}
+.team-agent.agent-row{--agent-accent:#8aa9ee;display:grid;grid-template-columns:34px minmax(0,1fr);align-items:center;column-gap:10px;min-height:70px;padding:10px 8px;margin:0 0 3px;border-radius:12px}
+.team-file{--agent-accent:#aa9bce!important}.team-evaluation{--agent-accent:#a4b878!important}.team-coding{--agent-accent:#79aaa6!important}.team-computer{--agent-accent:#8ebca7!important}.team-app{--agent-accent:#e2bb80!important}.team-browser{--agent-accent:#91bad2!important}.team-search{--agent-accent:#d5a499!important}.team-context{--agent-accent:#a2b1d0!important}
+.team-agent .agent-avatar{width:34px;height:34px;border-radius:11px;background:color-mix(in srgb,var(--agent-accent) 10%,#f8fafc)}
+.team-agent .agent-avatar svg{width:32px;height:32px}
+.team-agent .agent-info strong{display:block;padding-right:38px;font-size:11px;font-weight:600;line-height:1.5}
+.team-agent .agent-info small{margin-top:3px;font-size:8px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#95a3b5}
+.team-agent .agent-status{position:absolute;right:9px;top:12px;font-size:8px;line-height:16px;color:#a4b1c1}
+.team-agent .context-meter{margin-top:7px}.team-agent .context-caption{font-size:7px;color:#a2afbf;line-height:1}
+.team-agent .context-caption>span:first-child{color:#a2afbf}.team-agent .context-value{display:none}
+.team-agent .context-track{height:3px;margin-top:4px;background:#edf1f6}
+.team-agent .context-fill{background:var(--agent-accent)}
+.team-agent .context-meter[data-pressure=medium] .context-fill{background:#c8ab79}.team-agent .context-meter[data-pressure=high] .context-fill{background:#ce9090}
+.team-agent.agent-row:hover{background:#f5f8fc;border-color:#edf2f8}.team-agent.agent-row:focus-visible{outline-offset:1px}
+.team-main.agent-row{grid-template-columns:48px minmax(0,1fr);min-height:110px;padding:16px 12px;margin-bottom:13px;border:1px solid #dfe8fb;border-radius:16px;background:radial-gradient(ellipse at top left,#e5edff 0,transparent 75%),linear-gradient(135deg,#f0f5ff,#fafcff);box-shadow:0 5px 16px #5976b509}
+.team-main .agent-avatar{width:48px;height:48px;border-radius:15px;background:#e5edff}.team-main .agent-avatar svg{width:44px;height:44px}
+.team-main .agent-info strong{font-size:13px;padding-right:0}.team-main .agent-info small{margin-top:4px;font-size:8px}
+.team-main .agent-status{position:static;grid-column:2;grid-row:2;justify-self:start;margin-top:8px;padding:1px 7px;border-radius:20px;background:#e5edfc;color:#7692bf;font-size:8px;line-height:15px}
+.team-main .agent-avatar{grid-row:1 / 3;align-self:start;margin-top:2px}.team-main .context-meter{margin-top:10px}
+.team-agent.agent-row:is([data-mode=thinking],[data-mode=working],[data-mode=coordinating]){background:#f0f5ff;border-color:#e0e9fa}
+.team-main.agent-row:is([data-mode=thinking],[data-mode=working],[data-mode=coordinating]){background:radial-gradient(ellipse at top left,#dfe9ff,transparent 85%),#f3f7ff;border-color:#d4e1fa}
+.team-agent:is([data-mode=thinking],[data-mode=working],[data-mode=coordinating]) .agent-status:before{content:'';display:inline-block;width:4px;height:4px;margin-right:4px;vertical-align:1px;border-radius:50%;background:#7b9ed9;animation:team-status-pulse 1.8s ease-in-out infinite}
+.team-agent:is([data-mode=thinking],[data-mode=working],[data-mode=coordinating]) .agent-info small{color:#7892b9}
+.team-execution{margin:8px 4px 18px;padding:10px 3px;font-size:8px;color:#96a6bb}
+.team-panel .workspace-card{padding:12px;background:#f8faff;border-color:#eef2f8}.team-panel .workspace-card>span{display:none}.team-panel .workspace-card h3{margin:0 0 5px;font-size:10px}.team-panel .workspace-card p{font-size:9px;margin:0;line-height:1.7}.team-panel .workspace-card>div{margin-top:9px;padding-top:9px}
+@keyframes team-status-pulse{50%{opacity:.35}}
+@media(prefers-reduced-motion:reduce){.team-heading>span[data-active=true]:before,.team-agent .agent-status:before{animation:none}}

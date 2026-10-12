@@ -14,6 +14,11 @@ async function run(){
   await page.goto(data.url);await page.waitForFunction(()=>typeof liveConnected!=='undefined'&&liveConnected);
   assert.equal(await page.locator('.team-agent[data-mode=idle]').count(),9);
   assert.equal(await page.locator('.context-track[role=progressbar]').count(),9);
+  assert.equal(await page.locator('.team-heading span').textContent(),'团队待命');
+  assert((await page.locator('.team-subtitle').textContent()).includes('9 位成员'));
+  assert.equal(await page.locator('.team-main .context-percent').textContent(),'未采样');
+  assert(!await page.locator('.team-main .context-value').isVisible(),'full token details stay out of the compact roster');
+  assert(await page.locator('.team-main .agent-avatar').evaluate(node=>node.offsetWidth>document.querySelector('.team-file .agent-avatar').offsetWidth),'commander has a larger avatar');
   assert.equal(await page.locator('.team-context .context-value').textContent(),'未采样 / 256k');
   const meters=await page.evaluate(()=>{
    const originalSession=session;session='context-qa';
@@ -25,7 +30,7 @@ async function run(){
     updated:Date.now()/1000,events:[{id:1,kind:'model_start',content:{agent:'main'}}]}];
    MarvisTeam.render(snapshot);
    const track=document.querySelector('.team-main .context-track');
-   const first={main:track.getAttribute('aria-valuenow'),file:document.querySelector('.team-file .context-meter').dataset.pressure,
+   const first={main:track.getAttribute('aria-valuenow'),percent:document.querySelector('.team-main .context-percent').textContent,tooltip:document.querySelector('.team-main .context-meter').title,file:document.querySelector('.team-file .context-meter').dataset.pressure,
     context:document.querySelector('.team-context .context-value').textContent};
    snapshot.context_usage['context-qa'].main.estimated_tokens=10000;MarvisTeam.render(snapshot);
    const compacted={value:track.getAttribute('aria-valuenow'),stable:track===document.querySelector('.team-main .context-track')};
@@ -40,6 +45,7 @@ async function run(){
    session=originalSession;MarvisTeam.render(state);return {first,compacted,overflow,switched,empty};
   });
   assert.equal(meters.first.main,'50.0');assert.equal(meters.first.file,'high');assert.equal(meters.first.context,'30k / 1M · 3.0%');
+  assert.equal(meters.first.percent,'50.0%');assert(meters.first.tooltip.includes('128,000 / 256,000 tokens'));
   assert.equal(meters.compacted.value,'3.9');assert(meters.compacted.stable);
   assert.equal(meters.overflow.value,'100.0');assert(meters.overflow.text.includes('117.2%'));
   assert.equal(meters.switched.main,'10.0');assert.equal(meters.switched.file,'未采样 / 256k');
@@ -55,6 +61,8 @@ async function run(){
   await page.waitForFunction(()=>document.querySelector('.team-main').dataset.mode==='thinking');
   await page.waitForFunction(()=>document.querySelector('.team-computer').dataset.mode==='working');
   assert.equal(await page.locator('.team-main').getAttribute('data-mode'),'coordinating');
+  assert.equal(await page.locator('.team-heading span').textContent(),'2 位处理中');
+  assert.equal(await page.locator('.team-computer .agent-info small').textContent(),'正在检查电脑状态');
   assert.equal(await page.locator('.team-computer .agent-status').textContent(),'执行中');
   assert.equal(await page.locator('.team-computer .team-face-group').evaluate(n=>getComputedStyle(n).animationName),'team-head-work');
   const first=await page.locator('.team-computer .team-character').evaluate(n=>getComputedStyle(n).transform);
@@ -67,6 +75,7 @@ async function run(){
   await page.waitForFunction(()=>document.querySelectorAll('.team-agent[data-mode=idle]').length===9);
   assert.equal(await page.locator('.context-value').filter({hasText:'未采样 / 256k'}).count(),9);
   assert.equal(await page.locator('#team-execution').textContent(),'团队待命');
+  assert.equal(await page.locator('.team-heading span').textContent(),'团队待命','overview is scoped to the selected draft');
   assert(await page.evaluate(sid=>state.tasks.some(t=>t.session_id===sid&&t.status==='running'),runningSession));
   await page.waitForTimeout(600);
   assert.equal(await page.locator('.team-main .context-value').textContent(),'未采样 / 256k','background updates must not replace draft context');
