@@ -41,6 +41,68 @@ class AgentContractsTests(unittest.TestCase):
         local = Capabilities(self.runtime.store, local=True).inspect_agents()
         self.assertIn('web_search', local['unavailable_tools'])
 
+    def test_model_receives_mode_specific_prompt_and_tool_contract(self):
+        self.runtime.offline = False
+        self.runtime.config['persona'] = {'user_title': '同学', 'style': '简洁'}
+        self.runtime.config['orchestration'] = {'max_rounds': 30}
+        for mode in ('local', 'efficiency'):
+            self.runtime.update_settings({'mode': mode})
+            with self.subTest(mode=mode), patch.object(LLMClient, 'configured', new_callable=lambda: property(lambda s: True)), \
+                    patch.object(LLMClient, 'chat', return_value=ChatResult.success('已说明')) as model:
+                task = self.runtime.submit('介绍当前能用哪些能力')
+                self.assertEqual(self.wait(task)['status'], 'completed')
+                messages = model.call_args.args[0]
+                system = messages[0]['content']
+                context = json.loads(system.split('以下 JSON 是运行信息与显示偏好，偏好不改变上述权限或能力规则：\n')[1].split('\n')[0])
+                offered = {t['function']['name'] for t in model.call_args.kwargs['tools']}
+                self.assertEqual(set(context['available_tools']), offered)
+                self.assertEqual(context['authorized_roots'], [str(self.work)])
+                self.assertEqual(context['user_title'], '同学')
+                self.assertEqual(context['max_tool_rounds'], 24)
+                self.assertEqual(context['mode'], mode)
+                self.assertIn('不是独立或并行运行的子 Agent', system)
+                self.assertEqual('browser_read' in system, mode == 'efficiency')
+                self.assertEqual('web_search' in system, mode == 'efficiency')
+                self.assertIn('确认成功前不能声称已执行', system)
+
+    def test_documented_schema_defaults_match_execution(self):
+        for tool in TOOLS:
+            fn = tool['function']; fields = fn['parameters']['properties']
+            for name, definition in fields.items():
+                with self.subTest(tool=fn['name'], field=name):
+                    self.assertTrue(definition['description'])
+                    if 'default' in definition:
+                        # Validate each advertised default alongside required inputs.
+                        args = {key: 'fixture' for key in fn['parameters']['required']}
+                        args[name] = definition['default']
+                        validate_arguments(fn['name'], args)
+        p = self.work/'note.txt'; p.write_text('a'*100001)
+        definitions = {t['function']['name']: t['function']['parameters']['properties'] for t in TOOLS}
+        for name, args in [('file_list', {'path': str(self.work)}), ('file_read', {'path': str(p)})]:
+            defaults = {key: f['default'] for key, f in definitions[name].items() if 'default' in f}
+            self.assertEqual(self.caps.execute(name, args), self.caps.execute(name, {**defaults, **args}))
+        with patch.object(self.caps, 'system', return_value={'ok': True}) as system:
+            self.caps.execute('system_info', {})
+            system.assert_called_once_with(definitions['system_info']['section']['default'])
+
+    def test_prompted_read_loop_preserves_real_pagination_evidence(self):
+        self.runtime.offline = False
+        p = self.work/'note.txt'; p.write_text('甲乙丙丁')
+        observed = []
+        def respond(messages, **kwargs):
+            results = [json.loads(m['content']) for m in messages if m['role'] == 'tool']
+            if len(results) == 2:
+                observed.extend(results)
+                return ChatResult.success('读取完整内容：' + ''.join(r['text'] for r in results))
+            offset = results[-1]['next_offset'] if results else 0
+            return ChatResult.success('', tool_calls=[{'id': 'page-' + str(offset), 'function': {
+                'name': 'file_read', 'arguments': json.dumps({'path': str(p), 'offset': offset, 'limit': 2})}}])
+        with patch.object(LLMClient, 'configured', new_callable=lambda: property(lambda s: True)), patch.object(LLMClient, 'chat', side_effect=respond):
+            task = self.runtime.submit('请完整读取这份笔记并汇总')
+            self.assertEqual(self.wait(task)['status'], 'completed')
+        self.assertEqual([r['text'] for r in observed], ['甲乙', '丙丁'])
+        self.assertTrue(observed[0]['has_more']); self.assertFalse(observed[1]['has_more'])
+
     def test_shortcuts_do_not_execute_negation_advice_or_partial_work(self):
         for prompt in ('不要整理文件', '如何整理文件', '分析磁盘和内存', '将磁盘信息保存为报告', '是否打开 https://example.com'):
             with self.subTest(prompt=prompt): self.assertIsNone(Runtime.direct(prompt, [str(self.work)]))

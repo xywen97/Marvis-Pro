@@ -7,10 +7,10 @@ import json
 
 AGENTS = [
     {'id': 'main', 'name': '主控', 'role': '理解目标 · 编排任务 · 验证结果', 'icon': '✦',
-     'tools': ['agent_inspect'], 'guidance': '先检查能力与依赖；分解任务，依据真实结果交接；拒绝后停止该动作，失败时解释可恢复方案。'},
+     'tools': ['agent_inspect'], 'guidance': '能力或依赖不明确时按需检查；分解任务，依据真实结果交接并验证交付；拒绝后停止该动作，失败时调整方法或解释原因。'},
     {'id': 'file', 'name': '文件管家', 'role': '搜索 · 整理 · 文档 · OCR', 'icon': '▤',
      'tools': ['file_list', 'file_read', 'file_write', 'file_organize', 'file_duplicates', 'document_convert', 'knowledge_index', 'image_ocr'],
-     'guidance': '先发现路径再读取；检查截断与分页；完整内容写入，转换先核实格式；整理需批准，索引后交给搜索助手检索。'},
+     'guidance': '已知路径直接读取，未知路径先检索；区分分页、扫描上限与提取上限；新建文本提供完整内容，转换先核实格式；整理需批准，索引后交给搜索助手检索。'},
     {'id': 'computer', 'name': '电脑管家', 'role': '系统 · 磁盘 · 进程', 'icon': '▣',
      'tools': ['system_info'], 'guidance': '按需检查磁盘、内存、电池、进程；只诊断，不宣称完成系统修改；原始指标与判断分开。'},
     {'id': 'app', 'name': '软件管家', 'role': '应用发现 · 启动', 'icon': '▦',
@@ -23,8 +23,17 @@ AGENTS = [
 TOOL_AGENTS = {tool: agent['id'] for agent in AGENTS for tool in agent['tools']}
 
 
-def team_instructions():
-    return '\n'.join(a['name'] + '：' + a['guidance'] for a in AGENTS)
+def team_instructions(tool_names=None):
+    available = set(TOOL_AGENTS if tool_names is None else tool_names)
+    rows = []
+    for agent in AGENTS:
+        tools = [t for t in agent['tools'] if t in available]
+        if not tools: continue
+        guidance = agent['guidance']
+        if agent['id'] == 'search' and 'web_search' not in available:
+            guidance = '本机资料使用知识检索；未索引或索引过期时交给文件管家；读取原文件核实摘要。当前没有网络搜索能力。'
+        rows.append(agent['name'] + '（' + ', '.join(tools) + '）：' + guidance)
+    return '\n'.join(rows)
 
 
 def tool_message(result, budget=24000):
