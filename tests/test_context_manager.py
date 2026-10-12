@@ -198,18 +198,51 @@ class ContextManagerTests(unittest.TestCase):
         projected = self.runtime.context_messages(self.sid)
         self.assertEqual(projected, messages[1:])
         checkpoint = self.runtime.store.entry_branch(self.sid)[-1]['id']
+        readings = self.runtime.snapshot()['context_usage'][self.sid]
+        self.assertEqual(readings['main']['estimated_tokens'], estimate_tokens(messages))
+        self.assertGreater(readings['context']['estimated_tokens'], 0)
         self.runtime.cancels.pop(self.ident)
         fork = self.runtime.fork_session(self.sid, checkpoint)
         self.assertEqual(self.runtime.context_messages(fork['session_id']), projected)
+        self.assertEqual(self.runtime.snapshot()['context_usage'][fork['session_id']], readings)
         self.runtime.navigate_tree(self.sid, self.anchor)
         self.assertEqual(self.runtime.context_messages(self.sid), [])
+        self.assertNotIn(self.sid, self.runtime.snapshot()['context_usage'])
         self.runtime.navigate_tree(self.sid, checkpoint)
         self.runtime.close()
         self.runtime = Runtime(self.directory, config=self.config, offline=True)
         self.assertEqual(self.runtime.context_messages(self.sid), projected)
+        self.assertEqual(self.runtime.snapshot()['context_usage'][self.sid], readings)
         self.runtime.session_action(self.sid, 'delete')
         self.assertEqual(self.runtime.store.rows('SELECT * FROM entries WHERE session_id=?', (self.sid,)), [])
+        self.assertEqual(self.runtime.store.rows('SELECT * FROM context_samples WHERE session_id=?', (self.sid,)), [])
         self.assertEqual(self.runtime.context_messages(fork['session_id']), projected)
+
+    def test_streamed_usage_counts_output_and_stays_private_per_actor(self):
+        messages = [{'role': 'system', 'content': 'rules'}, {'role': 'user', 'content': 'goal'}]
+        streamed = []
+        def respond(ms, **kwargs):
+            kwargs['on_delta']('streamed content')
+            streamed.append(self.runtime.snapshot()['context_usage'][self.sid]['coding']['estimated_tokens'])
+            return ChatResult.success('streamed content')
+        self.client.chat.side_effect = respond
+        self.runtime._model_turn(self.ident, self.client, messages, 1, tools=[], agent='coding')
+        readings = self.runtime.snapshot()['context_usage'][self.sid]
+        expected = estimate_tokens(messages + [{'role': 'assistant', 'content': 'streamed content'}])
+        self.assertEqual(readings['coding']['estimated_tokens'], expected)
+        self.assertEqual(streamed, [expected])
+        self.assertNotIn('main', readings)
+        self.assertEqual(readings['coding']['window_tokens'], 6000)
+
+    def test_usage_records_even_when_compaction_disabled_and_uses_actual_projection(self):
+        self.config['context_management']['enabled'] = False
+        messages = self.messages(); messages[2]['content'] = 'x'*130000
+        self.client.chat.return_value = ChatResult.success('answer')
+        self.runtime._model_turn(self.ident, self.client, messages, 1, tools=[], agent='file')
+        sent = self.client.chat.call_args.args[0]
+        expected = estimate_tokens(sent + [{'role': 'assistant', 'content': 'answer'}])
+        self.assertEqual(self.runtime.snapshot()['context_usage'][self.sid]['file']['estimated_tokens'], expected)
+        self.assertEqual(self.checkpoints(), [])
 
     def test_worker_checkpoint_is_excluded_from_main_projection(self):
         self.prepare(self.messages(), actor='file')

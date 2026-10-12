@@ -117,6 +117,7 @@ class Runtime:
             # One transaction removes the entire tree and its execution history.
             with self.store.db:
                 if action == 'delete':
+                    self.store.db.execute('DELETE FROM context_samples WHERE session_id=?', (session_id,))
                     self.store.db.execute('DELETE FROM events WHERE task_id IN (SELECT id FROM tasks WHERE session_id=?)', (session_id,))
                     self.store.db.execute('UPDATE workflows SET last_task=NULL WHERE last_task IN (SELECT id FROM tasks WHERE session_id=?)', (session_id,))
                     self.store.db.execute('DELETE FROM messages WHERE session_id=?', (session_id,))
@@ -273,6 +274,10 @@ class Runtime:
                         db.execute('INSERT INTO messages(id,session_id,role,content,task_id,created,parent_id,label) VALUES (?,?,?,?,?,?,?,?)',
                             (ident,sid,n['role'],n['content'],task,n['created'],message_leaf,n['label']))
                         message_leaf = ident
+                for sample in self.store.rows('SELECT * FROM context_samples WHERE session_id=?', (session_id,)):
+                    if sample['entry_id'] in node_ids:
+                        db.execute('INSERT INTO context_samples VALUES (?,?,?,?,?)',
+                            (sid,node_ids[sample['entry_id']],sample['agent'],sample['data'],sample['updated']))
                 db.execute('UPDATE sessions SET active_leaf=?,active_entry=? WHERE id=?',(message_leaf,node_ids[node_id],sid))
             return {'session_id':sid}
 
@@ -306,7 +311,13 @@ class Runtime:
             with self.lock:
                 pending = self.approvals.get(task['id'])
                 task['approval'] = pending['plan'] if pending else None
-        return {'settings': self.settings(), 'sessions': self.sessions(), 'archived_sessions': self.sessions(True), 'tasks': tasks, 'agents': AGENTS,
+        settings = self.settings()
+        model = settings['model']['model']
+        if settings['mode'] == 'local': model = self.store.setting('local_model', {'model': 'qwen3:latest'})['model']
+        policy = ContextPolicy.load(self.config, model)
+        return {'settings': settings, 'sessions': self.sessions(), 'archived_sessions': self.sessions(True), 'tasks': tasks, 'agents': AGENTS,
+                'context_usage': self.store.context_samples(),
+                'context_policy': {'model': model, 'window_tokens': policy.window_tokens, 'trigger_tokens': policy.trigger},
                 'workflows': self.store.rows('SELECT * FROM workflows ORDER BY next_run'),
                 'knowledge_count': self.store.one('SELECT count(*) AS n FROM documents')['n']}
 
@@ -530,7 +541,7 @@ class Runtime:
         selected_tools = TOOLS if tools is None else tools
         self.context_manager.prepare(ident, client, messages, selected_tools, agent, request_id, deadline)
         self.store.event(ident, 'model_start', {'text': '正在生成处理方案与回复', 'step': step, 'model': client.model, 'agent': agent, 'request_id': request_id})
-        parts = []; event_id = None; last_flush = 0.0
+        parts = []; event_id = None; last_flush = 0.0; last_usage = 0.0
         # Drafts must not appear as a finished answer before the gate accepts them.
         hold_candidate = agent == 'main' and (evaluation_enabled(self) or status_summary)
         tool_events = {}; tool_parts = {}
@@ -541,6 +552,7 @@ class Runtime:
             check_turn()
             data = {'step': step, 'index': index, 'call_id': call['id'], 'tool': call['function']['name'], 'arguments': call['function']['arguments'], 'agent': agent, 'request_id': request_id}
             tool_parts[index] = data
+            sample_stream()
             now = time.monotonic()
             previous = tool_events.get(index)
             if previous and now - previous[1] < .1: return
@@ -560,8 +572,19 @@ class Runtime:
                 self.store.execute('UPDATE events SET content=? WHERE id=?', (json.dumps(data, ensure_ascii=False), event_id))
                 self.status(ident, 'running')
             last_flush = now
+        def sample_stream():
+            nonlocal last_usage
+            now = time.monotonic()
+            if now - last_usage >= .25:
+                output = {'role': 'assistant', 'content': ''.join(parts)}
+                if tool_parts:
+                    output['tool_calls'] = [{'id': d['call_id'], 'type': 'function',
+                        'function': {'name': d['tool'], 'arguments': d['arguments']}} for d in tool_parts.values()]
+                self.context_manager.record_usage(ident, client, projected + [output],
+                    selected_tools, agent, request_id, audit=False)
+                last_usage = now
         def delta(text):
-            check_turn(); parts.append(text); flush()
+            check_turn(); parts.append(text); flush(); sample_stream()
         policy = ContextPolicy.load(self.config, client.model)
         projected = messages if policy.enabled else self.bounded_context(messages)
         def output_options():
@@ -592,6 +615,10 @@ class Runtime:
         if hold_candidate and not status_summary and result.ok and result.content:
             kind = 'assistant_note' if result.tool_calls else 'delivery_candidate'
             self.store.event(ident, kind, {'text': result.content, 'step': step, 'agent': 'main', 'provisional': True})
+        if result.ok:
+            output = {'role': 'assistant', 'content': result.content}
+            if result.tool_calls: output['tool_calls'] = result.tool_calls
+            self.context_manager.record_usage(ident, client, projected + [output], selected_tools, agent, request_id)
         return result
 
     def _chat(self, ident, session_id, prompt, caps, settings):

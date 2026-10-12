@@ -16,6 +16,10 @@ window.MarvisTeam = (() => {
    row.title=agent.guidance||agent.role;
    const art=el('div','agent-avatar');art.innerHTML=avatar;
    const info=el('div','agent-info');info.append(el('strong','',agent.name),el('small','',agent.role));
+   const meter=el('div','context-meter'),caption=el('div','context-caption');
+   caption.append(el('span','','Context'),el('span','context-value'));
+   const track=el('div','context-track');track.setAttribute('role','progressbar');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');
+   track.append(el('span','context-fill'));meter.append(caption,track);info.append(meter);
    row.append(art,info,el('span','agent-status','待命'));row.onclick=()=>{
     const task=state.tasks.find(t=>['running','waiting_approval'].includes(t.status));
     if(task)safe(async()=>{session=task.session_id;showPage('chat');await renderMessages();});else showPage('office');
@@ -87,6 +91,21 @@ window.MarvisTeam = (() => {
   };
  }
  function stop(){queue=[];if(flight){flight.cancel();flight=null;}$('#agents .team-transfer')?.classList.remove('visible');$('#agents .team-route')?.classList.remove('visible');}
+ function tokenLabel(value){return value>=1000000?`${+(value/1000000).toFixed(2)}M`:value>=1000?`${+(value/1000).toFixed(1)}k`:String(value);}
+ function updateContext(row,snapshot,sid){
+  const reading=snapshot.context_usage?.[sid]?.[row.dataset.agent];
+  const capacity=reading?.window_tokens||snapshot.context_policy?.window_tokens||256000;
+  const used=Math.max(0,reading?.estimated_tokens||0),percent=used/capacity*100,level=Math.min(100,percent);
+  const meter=row.querySelector('.context-meter'),track=meter.querySelector('.context-track');
+  meter.dataset.pressure=percent>=95?'high':percent>=80?'medium':'low';
+  meter.querySelector('.context-value').textContent=reading?`${tokenLabel(used)} / ${tokenLabel(capacity)} · ${percent.toFixed(1)}%`:`未采样 / ${tokenLabel(capacity)}`;
+  track.querySelector('.context-fill').style.width=`${level}%`;
+  if(reading)track.setAttribute('aria-valuenow',level.toFixed(1));else track.removeAttribute('aria-valuenow');
+  track.setAttribute('aria-label',`${row.querySelector('strong').textContent}上下文占用`);
+  track.setAttribute('aria-valuetext',reading?`估算 ${used.toLocaleString()} / ${capacity.toLocaleString()} tokens，占用 ${percent.toFixed(1)}%`:`尚未采样，窗口容量 ${capacity.toLocaleString()} tokens`);
+  const trigger=reading?.trigger_tokens||snapshot.context_policy?.trigger_tokens||capacity;
+  meter.title=`${reading?'最近采样的上下文占用（估算）':'当前对话尚无模型用量采样'}\n${used.toLocaleString()} / ${capacity.toLocaleString()} tokens\n摘要触发值：${trigger.toLocaleString()} tokens\n模型：${reading?.model||snapshot.context_policy?.model||'当前模型'}`;
+ }
  function render(snapshot){
   if(!snapshot)return;init(snapshot);collect(snapshot);
   const modes=MarvisOffice.activity(snapshot);
@@ -96,10 +115,13 @@ window.MarvisTeam = (() => {
    }
   }
   if(Object.entries(modes).some(([id,item])=>id!=='main'&&['working','thinking'].includes(item.mode))&&modes.main.mode==='thinking')modes.main={...modes.main,mode:'coordinating'};
+  const activeTask=snapshot.tasks.find(t=>['running','waiting_approval'].includes(t.status));
+  const usageSession=activeTask?.session_id||session;
   for(const row of document.querySelectorAll('.team-agent')){
    const item=modes[row.dataset.agent];if(row.dataset.mode!==item.mode)row.dataset.mode=item.mode;
    row.querySelector('.agent-status').textContent=labels[item.mode];
    row.setAttribute('aria-label',snapshot.agents.find(a=>a.id===row.dataset.agent).name+' · '+labels[item.mode]);
+   updateContext(row,snapshot,usageSession);
   }
   const task=snapshot.tasks.find(t=>['running','waiting_approval'].includes(t.status));
   const selected=task&&snapshot.agents.find(a=>a.id===owner);

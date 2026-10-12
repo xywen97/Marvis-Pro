@@ -120,13 +120,19 @@ class ContextManager:
     def __init__(self, runtime):
         self.runtime = runtime
 
+    def record_usage(self, ident, client, messages, tools, actor, request_id=None, audit=True):
+        policy = ContextPolicy.load(self.runtime.config, client.model)
+        data = {'agent': actor, 'request_id': request_id, 'model': client.model,
+            'estimated_tokens': estimate_tokens(messages, tools), 'trigger_tokens': policy.trigger,
+            'window_tokens': policy.window_tokens, 'estimator': 'utf8_bytes_div_2'}
+        if audit: self.runtime.store.event(ident, 'context_usage', data)
+        self.runtime.store.sample_context(ident, actor, data)
+        return data['estimated_tokens']
+
     def prepare(self, ident, client, messages, tools, actor, request_id=None, deadline=None, force=False):
         policy = ContextPolicy.load(self.runtime.config, client.model)
+        before = self.record_usage(ident, client, messages, tools, actor, request_id)
         if not policy.enabled or actor == 'context': return
-        before = estimate_tokens(messages, tools)
-        self.runtime.store.event(ident, 'context_usage', {'agent': actor, 'request_id': request_id,
-            'estimated_tokens': before, 'trigger_tokens': policy.trigger, 'window_tokens': policy.window_tokens,
-            'estimator': 'utf8_bytes_div_2'})
         if not force and before < policy.trigger * policy.micro_ratio: return
         working = copy.deepcopy(messages)
         results = [i for i, m in enumerate(working) if m['role'] == 'tool']
@@ -152,6 +158,7 @@ class ContextManager:
             'source_sha256': hashlib.sha256(encoded(messages).encode()).hexdigest(),
             'messages': [m for m in working if m['role'] != 'system']})
         messages[:] = working
+        self.record_usage(ident, client, messages, tools, actor, request_id)
 
     def check(self, ident, deadline):
         self.runtime._check(ident)
@@ -198,9 +205,12 @@ class ContextManager:
                     raise ValueError('压缩助手自身输入超过预算；原上下文未替换。')
                 self.runtime.store.event(ident, 'context_model_start', {'agent': 'context', 'target_agent': actor,
                     'request_id': request_id, 'model': client.model, 'text': '正在生成上下文摘要'})
+                self.record_usage(ident, client, request, [], 'context', request_id)
                 response = client.chat(request, tools=[], tool_choice='none', max_tokens=policy.summary_tokens,
                     on_delta=lambda _: self.check(ident, deadline))
                 self.check(ident, deadline)
+                if response.ok:
+                    self.record_usage(ident, client, request + [{'role': 'assistant', 'content': response.content}], [], 'context', request_id)
                 if not response.ok or response.tool_calls or not response.content.strip():
                     raise ValueError('上下文压缩失败：' + str(response.error or '空摘要或非法工具调用'))
                 summary = response.content.strip()

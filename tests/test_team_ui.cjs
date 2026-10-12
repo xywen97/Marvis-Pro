@@ -13,6 +13,30 @@ async function run(){
   const page=await browser.newPage({viewport:{width:1480,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(data.url);await page.waitForFunction(()=>typeof liveConnected!=='undefined'&&liveConnected);
   assert.equal(await page.locator('.team-agent[data-mode=idle]').count(),9);
+  assert.equal(await page.locator('.context-track[role=progressbar]').count(),9);
+  assert.equal(await page.locator('.team-context .context-value').textContent(),'未采样 / 256k');
+  const meters=await page.evaluate(()=>{
+   const originalSession=session;session='context-qa';
+   const snapshot=JSON.parse(JSON.stringify(state));snapshot.context_usage={
+    'context-qa':{main:{estimated_tokens:128000,window_tokens:256000,trigger_tokens:256000},
+     file:{estimated_tokens:245760,window_tokens:256000},context:{estimated_tokens:30000,window_tokens:1000000}},
+    'other-qa':{main:{estimated_tokens:25600,window_tokens:256000}}};
+   MarvisTeam.render(snapshot);
+   const track=document.querySelector('.team-main .context-track');
+   const first={main:track.getAttribute('aria-valuenow'),file:document.querySelector('.team-file .context-meter').dataset.pressure,
+    context:document.querySelector('.team-context .context-value').textContent};
+   snapshot.context_usage['context-qa'].main.estimated_tokens=10000;MarvisTeam.render(snapshot);
+   const compacted={value:track.getAttribute('aria-valuenow'),stable:track===document.querySelector('.team-main .context-track')};
+   snapshot.context_usage['context-qa'].main.estimated_tokens=300000;MarvisTeam.render(snapshot);
+   const overflow={value:track.getAttribute('aria-valuenow'),text:track.getAttribute('aria-valuetext')};
+   session='other-qa';MarvisTeam.render(snapshot);
+   const switched={main:track.getAttribute('aria-valuenow'),file:document.querySelector('.team-file .context-value').textContent};
+   session=originalSession;MarvisTeam.render(state);return {first,compacted,overflow,switched};
+  });
+  assert.equal(meters.first.main,'50.0');assert.equal(meters.first.file,'high');assert.equal(meters.first.context,'30k / 1M · 3.0%');
+  assert.equal(meters.compacted.value,'3.9');assert(meters.compacted.stable);
+  assert.equal(meters.overflow.value,'100.0');assert(meters.overflow.text.includes('117.2%'));
+  assert.equal(meters.switched.main,'10.0');assert.equal(meters.switched.file,'未采样 / 256k');
   const main=await page.locator('.team-main').elementHandle();
   assert.equal(await page.locator('.team-main .team-character').evaluate(n=>getComputedStyle(n).animationName),'team-idle');
   await page.evaluate(()=>{
@@ -27,7 +51,9 @@ async function run(){
   const first=await page.locator('.team-computer .team-character').evaluate(n=>getComputedStyle(n).transform);
   await page.waitForTimeout(100);
   assert.notEqual(await page.locator('.team-computer .team-character').evaluate(n=>getComputedStyle(n).transform),first);
-  await page.screenshot({path:path.join(__dirname,'../docs/screenshots/team.png')});
+  await page.waitForFunction(()=>Number(document.querySelector('.team-computer .context-track').getAttribute('aria-valuenow'))>0);
+  assert(Number(await page.locator('.team-main .context-track').getAttribute('aria-valuenow'))>0);
+  await page.screenshot({path:process.env.MARVIS_TEAM_SCREENSHOT_PATH||path.join(__dirname,'../docs/screenshots/team.png')});
   await page.waitForFunction(()=>document.querySelector('.team-main').dataset.mode==='done');
   assert.equal(await page.locator('.team-computer').getAttribute('data-mode'),'done');
   await page.waitForFunction(()=>getComputedStyle(document.querySelector('.team-main .team-check')).opacity==='1');

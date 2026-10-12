@@ -30,6 +30,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS documents (path TEXT PRIMARY KEY, name TEXT, category TEXT, text TEXT, size INTEGER, modified REAL);
             CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, name TEXT, prompt TEXT, interval INTEGER, next_run REAL, enabled INTEGER, last_task TEXT);
             CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, session_id TEXT, parent_id TEXT, kind TEXT, role TEXT, content TEXT, data TEXT, task_id TEXT, event_id INTEGER, created REAL, label TEXT DEFAULT '');
+            CREATE TABLE IF NOT EXISTS context_samples (session_id TEXT, entry_id TEXT, agent TEXT, data TEXT, updated REAL, PRIMARY KEY(session_id,entry_id,agent));
             CREATE INDEX IF NOT EXISTS entries_session ON entries(session_id);
             CREATE INDEX IF NOT EXISTS entries_task ON entries(task_id,created);
             CREATE INDEX IF NOT EXISTS events_task ON events(task_id,id);
@@ -85,6 +86,27 @@ class Store:
         """Commit one bounded indexing batch rather than fsync every file."""
         with self.lock, self.db:
             self.db.executemany('INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?)', rows)
+
+    def sample_context(self, task_id, agent, data):
+        """Keep numeric readings at execution anchors without adding tree nodes."""
+        with self.lock:
+            anchor = self.one('SELECT id,session_id FROM entries WHERE task_id=? ORDER BY created DESC,rowid DESC LIMIT 1', (task_id,))
+            if not anchor: return
+            self.execute('INSERT OR REPLACE INTO context_samples VALUES (?,?,?,?,?)',
+                (anchor['session_id'], anchor['id'], agent, json.dumps(data, ensure_ascii=False), time.time()))
+
+    def context_samples(self):
+        # UNION terminates even if corrupt ancestry contains a cycle. Only the
+        # selected ancestry contributes; sibling branch readings never leak.
+        rows = self.rows('''WITH RECURSIVE path(session_id,id,parent_id) AS (
+            SELECT s.id,e.id,e.parent_id FROM sessions s JOIN entries e ON e.id=s.active_entry
+            UNION SELECT p.session_id,e.id,e.parent_id FROM path p JOIN entries e ON e.id=p.parent_id AND e.session_id=p.session_id
+        ) SELECT c.* FROM context_samples c JOIN path p ON c.session_id=p.session_id AND c.entry_id=p.id
+          ORDER BY c.updated,c.rowid''')
+        result = {}
+        for row in rows:
+            result.setdefault(row['session_id'], {})[row['agent']] = json.loads(row['data'])
+        return result
 
     def session(self, title='新对话'):
         ident = uid()
