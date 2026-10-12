@@ -9,16 +9,8 @@ import urllib.parse
 from pathlib import Path
 from llm_client import LLMClient
 from marvis.store import Store, uid
-from marvis.capabilities import Capabilities, TOOLS, MUTATIONS
-
-AGENTS = [
-    {'id': 'main', 'name': '主控', 'role': '理解目标 · 编排任务', 'icon': '✦'},
-    {'id': 'file', 'name': '文件管家', 'role': '搜索 · 整理 · 文档', 'icon': '▤'},
-    {'id': 'computer', 'name': '电脑管家', 'role': '系统 · 磁盘 · 进程', 'icon': '▣'},
-    {'id': 'app', 'name': '软件管家', 'role': '应用发现 · 启动', 'icon': '▦'},
-    {'id': 'browser', 'name': '浏览器管家', 'role': '网页读取 · 打开', 'icon': '◎'},
-    {'id': 'search', 'name': '搜索助手', 'role': '网络搜索 · 知识检索', 'icon': '⌕'},
-]
+from marvis.capabilities import Capabilities, TOOLS, MUTATIONS, validate_arguments
+from marvis.team import AGENTS, TOOL_AGENTS, team_instructions, tool_message
 
 
 class Cancelled(Exception): pass
@@ -38,6 +30,7 @@ class Runtime:
             raise RuntimeError('此工作空间已有后台引擎运行。请连接现有服务，或使用另一个 --data-dir。')
         self.store = Store(directory)
         self.config = config or {}
+        self.base_model = LLMClient(**{k: v for k, v in (self.config.get('llm') or {}).items() if k in ('base_url', 'model', 'api_key', 'temperature', 'env_file')})
         self.offline = offline
         self.lock = threading.RLock()
         self.closed = threading.Event()
@@ -47,7 +40,7 @@ class Runtime:
         self.scheduler.start()
 
     def settings(self):
-        base = LLMClient(**{k: v for k, v in (self.config.get('llm') or {}).items() if k in ('base_url', 'model', 'api_key', 'temperature', 'env_file')})
+        base = self.base_model
         saved = self.store.setting('model', {})
         return {'mode': self.store.setting('mode', 'efficiency'), 'roots': self.store.setting('roots', [str(Path.cwd())]),
                 'model': {'base_url': saved.get('base_url', base.base_url), 'model': saved.get('model', base.model),
@@ -188,7 +181,7 @@ class Runtime:
                 call_id = data.get('call_id') or (next(iter(pending)) if len(pending)==1 else None)
                 output = data.get('result',{'error':data.get('text','没有记录返回内容')})
                 if call_id in pending:
-                    messages.append({'role':'tool','tool_call_id':call_id,'content':json.dumps(output,ensure_ascii=False)})
+                    messages.append({'role':'tool','tool_call_id':call_id,'content':tool_message(output)})
                     pending.pop(call_id)
                 else:
                     messages.append({'role':'assistant','content':'历史工具返回：\n'+node['content']})
@@ -356,27 +349,36 @@ class Runtime:
 
     def _tool(self, ident, caps, name, args, step=0, call_id=None):
         self._check(ident)
-        group = 'search' if name in ('knowledge_search', 'web_search') else 'computer' if name.startswith('system_') else 'app' if name.startswith('app_') else 'browser' if name.startswith('browser_') else 'file'
+        group = TOOL_AGENTS.get(name, 'main') if isinstance(name, str) else 'main'
         context = {'step': step, 'call_id': call_id or uid()}
         self.store.event(ident, 'tool_start', {'agent': group, 'tool': name, 'arguments': args, **context})
-        plan = None
-        if name in MUTATIONS:
-            plan = caps.preview(name, args)
-            pending = {'plan': {'tool': name, **plan}, 'approved': False, 'event': threading.Event()}
-            with self.lock: self.approvals[ident] = pending
-            self.status(ident, 'waiting_approval'); self.store.event(ident, 'approval', {**pending['plan'], **context})
-            deadline = time.monotonic() + 300
-            while not pending['event'].wait(.2):
-                self._check(ident)
-                if time.monotonic() > deadline: raise Cancelled('确认已超时，未执行操作。')
-            self._check(ident)
-            with self.lock: self.approvals.pop(ident, None)
-            self.status(ident, 'running')
-            if not pending['approved']:
-                self.store.event(ident, 'rejected', {'text': '用户拒绝了操作。', 'tool':name, 'result':{'rejected':True,'message':'用户拒绝此操作；不要再次尝试。'}, **context})
-                return {'rejected': True, 'message': '用户拒绝此操作；不要再次尝试。'}
-            self.store.event(ident, 'approved', {'tool': name, **context})
+        started = time.monotonic()
         try:
+            validate_arguments(name, args)
+            plan = None
+            if name in MUTATIONS:
+                # Rejection is an engine rule, including changed arguments and
+                # another call in the same provider batch; never re-prompt.
+                if any(e['kind'] == 'rejected' and e['content'].get('tool') == name for e in self.store.events(ident)):
+                    out = {'rejected': True, 'message': '用户已拒绝此工具，本任务不可再次尝试。'}
+                    self.store.event(ident, 'rejected', {'agent': group, 'tool': name, 'result': out, **context})
+                    return out
+                plan = caps.preview(name, args)
+                pending = {'plan': {'tool': name, **plan}, 'approved': False, 'event': threading.Event()}
+                with self.lock: self.approvals[ident] = pending
+                self.status(ident, 'waiting_approval'); self.store.event(ident, 'approval', {**pending['plan'], **context})
+                deadline = time.monotonic() + 300
+                while not pending['event'].wait(.2):
+                    self._check(ident)
+                    if time.monotonic() > deadline: raise Cancelled('确认已超时，未执行操作。')
+                self._check(ident)
+                with self.lock: self.approvals.pop(ident, None)
+                self.status(ident, 'running')
+                if not pending['approved']:
+                    out = {'rejected': True, 'message': '用户拒绝此操作；不要再次尝试。'}
+                    self.store.event(ident, 'rejected', {'agent': group, 'text': '用户拒绝了操作。', 'tool': name, 'result': out, **context})
+                    return out
+                self.store.event(ident, 'approved', {'tool': name, **context})
             started = time.monotonic()
             result = caps.execute(name, args, plan)
             self.store.event(ident, 'tool_result', {'agent': group, 'tool': name, 'result': result, 'elapsed_ms': round((time.monotonic() - started) * 1000), **context})
@@ -384,8 +386,10 @@ class Runtime:
             return result
         except Cancelled: raise
         except Exception as e:
-            self.store.event(ident, 'tool_error', {'agent': group, 'tool': name, 'text': str(e), **context})
+            self.store.event(ident, 'tool_error', {'agent': group, 'tool': name, 'text': str(e), 'elapsed_ms': round((time.monotonic() - started) * 1000), **context})
             raise
+        finally:
+            with self.lock: self.approvals.pop(ident, None)
 
     @staticmethod
     def direct(prompt, roots):
@@ -393,6 +397,10 @@ class Runtime:
             _, name, args = prompt.split(' ', 2)
             return {'tool': name, 'arguments': json.loads(args)}
         if re.search(r'并且|然后|接着|以及|同时|并', prompt): return None
+        if prompt.strip() in ('检查团队能力', '查看Agent能力', '查看团队能力'): return {'tool': 'agent_inspect', 'arguments': {}}
+        # Keywords inside advice, negation and multi-action requests are not
+        # authorization for the shortcut's one concrete operation.
+        if re.search(r'不要|别|禁止|如何|怎么|怎样|能否|是否|为什么|建议|解释|介绍|原因|评估|分析|对比|总结|保存|写入|导出|生成', prompt): return None
         # A small deterministic offline grammar; more complex requests use the model.
         path = re.search(r'["「]([^"」]+)["」]|((?:/|~/)[^\s，。]+)', prompt)
         target = (path.group(1) or path.group(2)) if path else roots[0]
@@ -436,7 +444,47 @@ class Runtime:
             with self.lock:
                 self.approvals.pop(ident, None); self.cancels.pop(ident, None)
 
-    def _model_turn(self, ident, client, messages, step, tool_choice='auto'):
+    @staticmethod
+    def bounded_context(messages, budget=120000):
+        """Drop complete old turns, never split a tool call/result protocol."""
+        if len(json.dumps(messages, ensure_ascii=False)) <= budget: return messages
+        system = messages[:1]; body = messages[1:]; removed = 0
+        while len(json.dumps(system + body, ensure_ascii=False)) > budget:
+            next_turn = next((i for i, m in enumerate(body[1:], 1) if m['role'] == 'user'), None)
+            if next_turn is None: break
+            removed += next_turn; body = body[next_turn:]
+        if removed:
+            system = [dict(system[0], content=system[0]['content'] + '\n部分较早对话超过上下文预算已省略；不要声称记得未提供的细节。')]
+        projected = system + body
+        # A single long tool-heavy turn can itself exceed the budget. Project
+        # completed evidence, keeping every call ID and corresponding result.
+        for limit in (4000, 1000, 256):
+            if len(json.dumps(projected, ensure_ascii=False)) <= budget: break
+            compact = []
+            for message in projected:
+                item = dict(message)
+                if item['role'] == 'tool':
+                    try: value = json.loads(item['content'])
+                    except (ValueError, TypeError): value = {'text': item['content']}
+                    item['content'] = tool_message(value, limit)
+                elif item['role'] == 'assistant':
+                    if len(item.get('content') or '') > limit: item['content'] = item['content'][:limit] + '…[历史说明截断]'
+                    if item.get('tool_calls'):
+                        item['tool_calls'] = []
+                        for call in message['tool_calls']:
+                            fn = dict(call['function'])
+                            if len(fn.get('arguments', '')) > limit:
+                                try: value = json.loads(fn['arguments'])
+                                except ValueError: value = {'text': fn['arguments']}
+                                fn['arguments'] = tool_message(value, limit)
+                            item['tool_calls'].append({**call, 'function': fn})
+                compact.append(item)
+            projected = compact
+        if len(json.dumps(projected, ensure_ascii=False)) > budget:
+            raise ValueError('当前任务证据超过上下文预算，请拆分任务或从近期执行节点继续。')
+        return projected
+
+    def _model_turn(self, ident, client, messages, step, tool_choice='auto', tools=None):
         self.store.event(ident, 'model_start', {'text': '正在生成处理方案与回复', 'step': step, 'model': client.model})
         parts = []; event_id = None; last_flush = 0.0
         tool_events = {}; tool_parts = {}
@@ -464,7 +512,7 @@ class Runtime:
             last_flush = now
         def delta(text):
             self._check(ident); parts.append(text); flush()
-        result = client.chat(messages, tools=TOOLS, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta)
+        result = client.chat(self.bounded_context(messages), tools=TOOLS if tools is None else tools, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta)
         self._check(ident)
         flush(True)
         for index, data in tool_parts.items():
@@ -491,46 +539,78 @@ class Runtime:
                   '调用工具前可给出一句简短的行动说明，说明接下来做什么；无需展示内部推理。'
                   '系统修改、远程控制、图像语义识别、PPT生成尚未支持，不得声称完成。'
                   '回答用中文，清晰简洁。授权目录：' + json.dumps(settings['roots'], ensure_ascii=False))
+        system += '\n团队职责与交接规则：\n' + team_instructions()
+        system += '\n任何 truncated/has_more/extraction_limited 结果都不代表完整扫描；需要完整证据时分页读取。重复失败请换方法或解释原因，不要无限重试。'
         history = self.context_messages(session_id, ident)
         persona = self.config.get('persona', {})
         system += '\n称呼用户：' + persona.get('user_title', '老板') + '。风格：' + persona.get('style', '理智高效') + '。'
         messages = [{'role': 'system', 'content': system}] + history
-        for step in range(8):
+        options = self.config.get('orchestration') or {}
+        rounds = max(1, min(24, int(options.get('max_rounds', 8))))
+        failures = {}; calls_seen = set()
+        available_tools = [t for t in TOOLS if not (settings['mode'] == 'local' and t['function']['name'] in ('browser_read', 'browser_open', 'web_search'))]
+        for step in range(rounds):
             self._check(ident)
-            result = self._model_turn(ident, client, messages, step + 1)
+            result = self._model_turn(ident, client, messages, step + 1, tools=available_tools)
             self._check(ident)
             if not result.ok: raise ValueError('模型调用失败：' + result.error)
-            if not result.tool_calls: return result.content.strip() or '模型返回空响应，请重试。'
+            if not result.tool_calls:
+                if not result.content.strip(): raise ValueError('模型返回空响应，请重试。')
+                return result.content.strip()
             if len(result.tool_calls) > 12: raise ValueError('模型单次工具请求超过限制。')
+            normalized = []
+            for tc in result.tool_calls:
+                if not isinstance(tc, dict) or not isinstance(tc.get('function'), dict): raise ValueError('模型返回无效工具调用结构。')
+                tc = {**tc, 'function': dict(tc['function']), 'type': 'function'}
+                if not isinstance(tc.get('id'), str) or not tc['id'] or tc['id'] in calls_seen: tc['id'] = uid()
+                calls_seen.add(tc['id']); normalized.append(tc)
+            result.tool_calls = normalized
             messages.append({'role': 'assistant', 'content': result.content, 'tool_calls': result.tool_calls})
             for tc in result.tool_calls:
                 fn = tc.get('function', {})
                 started_call = False
+                signature = None
                 try:
                     args = json.loads(fn.get('arguments') or '{}')
                     if not isinstance(args, dict): raise ValueError('工具参数必须为对象。')
+                    signature = json.dumps([fn.get('name', ''), args], sort_keys=True, ensure_ascii=False)
+                    if failures.get(signature, 0) >= 2: raise ValueError('相同参数已失败两次，停止重复执行；请调整参数或解释失败原因。')
                     started_call = True
                     out = self._tool(ident, caps, fn.get('name', ''), args, step=step + 1, call_id=tc['id'])
+                    failures.pop(signature, None)
                 except Cancelled: raise
                 except Exception as e:
                     out = {'error': str(e)}
+                    if signature: failures[signature] = failures.get(signature, 0) + 1
                     if not started_call:
                         metadata = {'tool':fn.get('name',''),'call_id':tc['id'],'step':step+1}
                         self.store.event(ident,'tool_start',{**metadata,'arguments':fn.get('arguments',''),'agent':'main'})
                         self.store.event(ident,'tool_error',{**metadata,'text':str(e),'elapsed_ms':0})
-                messages.append({'role': 'tool', 'tool_call_id': tc['id'], 'content': json.dumps(out, ensure_ascii=False)[:24000]})
-        final = self._model_turn(ident, client, messages, 9, tool_choice='none')
+                messages.append({'role': 'tool', 'tool_call_id': tc['id'], 'content': tool_message(out)})
+        self.store.event(ident, 'execution_limit', {'agent': 'main', 'text': '达到工具轮次上限，汇总已完成工作与未完成事项。'})
+        messages.append({'role': 'system', 'content': '工具执行预算已用完。根据真实结果汇总已完成与未完成事项，不能继续调用工具，也不能声称任务全部完成。'})
+        final = self._model_turn(ident, client, messages, rounds + 1, tool_choice='none', tools=available_tools)
         self._check(ident)
         if not final.ok: raise ValueError(final.error)
+        if final.tool_calls: raise ValueError('模型在执行预算用完后仍返回工具调用，未执行这些操作。')
         return final.content.strip() or '已达到执行步数上限，请查看执行记录。'
 
     @staticmethod
     def format_result(result):
-        if 'text' in result: return result['text']
+        if 'agents' in result:
+            return '团队能力：\n\n' + '\n'.join(f"• {a['name']}：{a['guidance']}" for a in result['agents']) + '\n\n依赖与可用性：\n' + json.dumps({k:v for k,v in result.items() if k != 'agents'}, ensure_ascii=False, indent=2)
+        if 'text' in result:
+            notice = '\n\n内容未完整返回，请使用 offset/limit 继续读取。' if result.get('has_more') or result.get('extraction_limited') or result.get('truncated') else ''
+            prefix = ((result.get('title') or '网页内容') + '\n来源：' + result['url'] + '\n\n') if 'url' in result else ''
+            if result.get('language') == 'eng': notice += '\n\n' + result.get('notice', '')
+            return prefix + result['text'] + notice
         if 'files' in result:
             files = result['files']
-            if not files: return '没有找到匹配文件。'
-            return f'找到 {len(files)} 个文件：\n\n' + '\n'.join(f"• {f['path']}  ({f.get('category', '')}, {f.get('size', 0):,} 字节)" for f in files)
+            if not files: return '扫描达到 5000 文件上限，当前范围内没有匹配；请缩小目录范围后重试。' if result.get('scan_truncated') else '没有找到匹配文件。'
+            notice = '\n\n还有更多匹配，可使用 offset/limit 分页。' if result.get('has_more') else ''
+            if result.get('scan_truncated'): notice += '\n扫描达到上限，请缩小目录范围。'
+            if any(f.get('stale') for f in files): notice += '\n部分文件索引已过期，请重新索引后核实。'
+            return f'找到 {len(files)} 个文件：\n\n' + '\n'.join(f"• {f['path']}  ({f.get('category', '')}, {f.get('size', 0):,} 字节)" for f in files) + notice
         if 'apps' in result: return '已安装应用：\n\n' + '\n'.join(result['apps'])
         if 'output' in result: return result['output']
         return json.dumps(result, ensure_ascii=False, indent=2)

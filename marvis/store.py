@@ -17,6 +17,7 @@ class Store:
         self.directory = Path(directory).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        self.settings_revision = 0
         self.db = sqlite3.connect(str(self.directory / 'marvis.sqlite3'), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript('''
@@ -31,6 +32,12 @@ class Store:
             CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, session_id TEXT, parent_id TEXT, kind TEXT, role TEXT, content TEXT, data TEXT, task_id TEXT, event_id INTEGER, created REAL, label TEXT DEFAULT '');
             CREATE INDEX IF NOT EXISTS entries_session ON entries(session_id);
             CREATE INDEX IF NOT EXISTS entries_task ON entries(task_id,created);
+            CREATE INDEX IF NOT EXISTS events_task ON events(task_id,id);
+            CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status);
+            CREATE INDEX IF NOT EXISTS tasks_session ON tasks(session_id);
+            CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id);
+            CREATE INDEX IF NOT EXISTS messages_task ON messages(task_id);
+            CREATE INDEX IF NOT EXISTS entries_event ON entries(event_id);
         ''')
         # Upgrade linear histories once; preserve all original message IDs and content.
         old_messages = 'parent_id' not in {r[1] for r in self.db.execute('PRAGMA table_info(messages)')}
@@ -70,7 +77,14 @@ class Store:
         return json.loads(row['value']) if row else default
 
     def set_setting(self, key, value):
-        self.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (key, json.dumps(value, ensure_ascii=False)))
+        with self.lock:
+            self.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (key, json.dumps(value, ensure_ascii=False)))
+            self.settings_revision += 1
+
+    def upsert_documents(self, rows):
+        """Commit one bounded indexing batch rather than fsync every file."""
+        with self.lock, self.db:
+            self.db.executemany('INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?)', rows)
 
     def session(self, title='新对话'):
         ident = uid()

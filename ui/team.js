@@ -13,6 +13,7 @@ window.MarvisTeam = (() => {
   if(initialized)return;initialized=true;const box=$('#agents');box.classList.add('animated-team');
   for(const agent of snapshot.agents){
    const row=el('button','agent-row team-agent team-'+agent.id);row.type='button';row.dataset.agent=agent.id;
+   row.title=agent.guidance||agent.role;
    const art=el('div','agent-avatar');art.innerHTML=avatar;
    const info=el('div','agent-info');info.append(el('strong','',agent.name),el('small','',agent.role));
    row.append(art,info,el('span','agent-status','待命'));row.onclick=()=>{
@@ -29,7 +30,7 @@ window.MarvisTeam = (() => {
    const tool=event.content.tool||'';
    return event.content.agent||(tool==='web_search'||tool==='knowledge_search'?'search':tool.startsWith('system_')?'computer':tool.startsWith('app_')?'app':tool.startsWith('browser_')?'browser':'file');
   }
-  if(['model_start','tool_result','tool_error','completed','cancelled','failed'].includes(event.kind))return 'main';
+  if(['model_start','tool_result','tool_error','rejected','completed','cancelled','failed'].includes(event.kind))return 'main';
   return null;
  }
  function collect(snapshot){

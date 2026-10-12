@@ -53,3 +53,7 @@ llm:
 logging:
   level: "INFO"
   file: "logs/marvisxy.log"
+
+# 主控工具执行预算，范围 1–24；结束后额外进行一次不调用工具的总结。
+orchestration:
+  max_rounds: 8

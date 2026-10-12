@@ -42,7 +42,7 @@ window.MarvisOffice = (() => {
    let agent='main', tool='';
    for(const event of task.events){
     if(event.kind==='tool_start'){agent=event.content.agent||role(event.content.tool);tool=event.content.tool;}
-    else if(['model_start','tool_result','tool_error'].includes(event.kind)){agent='main';tool='';}
+    else if(['model_start','tool_result','tool_error','rejected'].includes(event.kind)){agent='main';tool='';}
    }
    modes.main={mode:task.status==='waiting_approval'?'waiting':'thinking',task,tool:''};
    if(agent!=='main'&&modes[agent])modes[agent]={mode:task.status==='waiting_approval'?'waiting':'working',task,tool};
@@ -82,7 +82,7 @@ window.MarvisOffice = (() => {
   const agent=snapshot.agents.find(a=>a.id===selected),item=modes[selected];
   $('#office-agent-name').textContent=names[selected];$('#office-agent-role').textContent=agent.role;
   $('#office-agent-state').textContent=labels[item.mode];
-  $('#office-agent-work').textContent=item.task?item.task.prompt:'没有正在执行的任务。点击工位可以查看各管家的状态。';
+  $('#office-agent-work').textContent=item.task?item.task.prompt:(agent.guidance||'没有正在执行的任务。点击工位可以查看各管家的状态。');
   const action=$('#office-agent-open');action.hidden=!item.task;action.onclick=()=>safe(async()=>{session=item.task.session_id;showPage('chat');await renderMessages();});
   const list=$('#office-recent');
   const signature=JSON.stringify(snapshot.tasks.slice(0,6).map(t=>[t.id,t.status]));

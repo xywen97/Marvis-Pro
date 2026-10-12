@@ -200,8 +200,11 @@ class LLMClient:
             with opener.open(req, timeout=self.timeout) as resp:
                 if on_delta is not None and 'text/event-stream' in resp.headers.get('Content-Type', '').lower():
                     content_parts, calls = [], {}
+                    received = 0
                     finished = False
                     for line in resp:
+                        received += len(line)
+                        if received > 8 * 1024 * 1024: raise ValueError('模型流式响应超过 8 MB 限制。')
                         line = line.decode('utf-8').strip()
                         if not line.startswith('data:'): continue
                         data = line[5:].strip()
@@ -230,7 +233,9 @@ class LLMClient:
                     if not finished: raise ValueError('流式连接提前结束，回复未完成。')
                     raw = {'choices': [{'message': {'content': ''.join(content_parts), 'tool_calls': [calls[i] for i in sorted(calls)]}}]}
                 else:
-                    raw = json.loads(resp.read().decode("utf-8"))
+                    data = resp.read(4 * 1024 * 1024 + 1)
+                    if len(data) > 4 * 1024 * 1024: raise ValueError('模型响应超过 4 MB 限制。')
+                    raw = json.loads(data.decode("utf-8"))
         except urllib.error.HTTPError as e:
             detail = ""
             try:
