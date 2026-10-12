@@ -13,8 +13,17 @@ async function run(){
   browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE||undefined});
   const page=await browser.newPage({viewport:{width:1480,height:1100}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(data.url);await page.waitForFunction(()=>typeof liveConnected!=='undefined'&&liveConnected);
-  await page.locator('[data-page=office]').click();assert.equal(await page.locator('.office-station').count(),8);
-  assert.equal(await page.locator('.office-station[data-mode=idle]').count(),8);
+  await page.locator('[data-page=office]').click();assert.equal(await page.locator('.office-station').count(),9);
+  assert.equal(await page.locator('.office-station[data-mode=idle]').count(),9);
+  const compacting=await page.evaluate(()=>{
+   const snapshot={agents:state.agents,tasks:[{id:'context-qa',status:'running',events:[
+    {kind:'context_compaction_start',content:{agent:'context',target_agent:'coding'}}]}]};
+   const start=MarvisOffice.activity(snapshot);
+   snapshot.tasks[0].events.push({kind:'context_compaction',content:{agent:'coding'}});
+   return {start,finish:MarvisOffice.activity(snapshot)};
+  });
+  assert.equal(compacting.start.context.mode,'thinking');
+  assert.equal(compacting.finish.context.mode,'idle');assert.equal(compacting.finish.coding.mode,'thinking');
   const saved=await page.locator('.office-station[data-agent=main]').elementHandle();
   await page.locator('#office-start').click();await page.locator('#prompt').fill('请做一份本机健康评估');await page.locator('#prompt').press('Enter');
   await page.locator('[data-page=office]').click();
@@ -40,7 +49,7 @@ async function run(){
   await page.emulateMedia({reducedMotion:'no-preference'});await page.locator('[data-page=chat]').click();
   assert.equal(await page.locator('.agent-main .mascot').evaluate(n=>getComputedStyle(n).animationPlayState),'paused');
   assert.deepEqual(errors,[]);
-  console.log('Office UI passed: eight stable avatars, real thinking/tool/completion states, animated transforms, nested task links, counters, narrow layout, reduced motion and background pause.');
+  console.log('Office UI passed: nine stable avatars, context handback, real thinking/tool/completion states, animated transforms, nested task links, counters, narrow layout, reduced motion and background pause.');
  }finally{if(browser)await browser.close();fixture.stdin.end();}
 }
 run().catch(error=>{console.error(error);process.exitCode=1});

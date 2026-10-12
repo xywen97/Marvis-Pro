@@ -12,6 +12,7 @@ from marvis.store import Store, uid
 from marvis.capabilities import Capabilities, TOOLS, MUTATIONS, validate_arguments
 from marvis.team import AGENTS, TOOL_AGENTS, tool_message
 from marvis.evaluation import enabled as evaluation_enabled
+from marvis.context_manager import ContextManager, ContextPolicy, estimate_tokens
 
 
 class Cancelled(Exception): pass
@@ -31,6 +32,7 @@ class Runtime:
             raise RuntimeError('此工作空间已有后台引擎运行。请连接现有服务，或使用另一个 --data-dir。')
         self.store = Store(directory)
         self.config = config or {}
+        self.context_manager = ContextManager(self)
         self.base_model = LLMClient(**{k: v for k, v in (self.config.get('llm') or {}).items() if k in ('base_url', 'model', 'api_key', 'temperature', 'env_file')})
         self.offline = offline
         self.lock = threading.RLock()
@@ -169,6 +171,10 @@ class Runtime:
             pending.clear()
         for node in path:
             data = node['data']; kind = node['kind']
+            if kind == 'context_compaction':
+                if data.get('agent') == 'main':
+                    pending.clear(); messages = list(data['messages'])
+                continue
             if kind == 'agent_context' or data.get('scope') == 'worker': continue
             if kind != 'tool_result': close_pending()
             if kind in ('user','assistant','thinking'):
@@ -521,6 +527,8 @@ class Runtime:
         return projected
 
     def _model_turn(self, ident, client, messages, step, tool_choice='auto', tools=None, agent='main', request_id=None, deadline=None, status_summary=False):
+        selected_tools = TOOLS if tools is None else tools
+        self.context_manager.prepare(ident, client, messages, selected_tools, agent, request_id, deadline)
         self.store.event(ident, 'model_start', {'text': '正在生成处理方案与回复', 'step': step, 'model': client.model, 'agent': agent, 'request_id': request_id})
         parts = []; event_id = None; last_flush = 0.0
         # Drafts must not appear as a finished answer before the gate accepts them.
@@ -554,7 +562,20 @@ class Runtime:
             last_flush = now
         def delta(text):
             check_turn(); parts.append(text); flush()
-        result = client.chat(self.bounded_context(messages), tools=TOOLS if tools is None else tools, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta)
+        policy = ContextPolicy.load(self.config, client.model)
+        projected = messages if policy.enabled else self.bounded_context(messages)
+        def output_options():
+            if not policy.enabled: return {}
+            remaining = policy.window_tokens - estimate_tokens(messages, selected_tools)
+            return {'max_tokens': min(policy.output_reserve_tokens, max(1, remaining))}
+        options = output_options()
+        result = client.chat(projected, tools=selected_tools, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta, **options)
+        if policy.enabled and not result.ok and any(marker in str(result.error).lower() for marker in
+                ('context_length_exceeded', 'maximum context length', 'prompt is too long', 'prompt too long')):
+            check_turn()
+            self.context_manager.prepare(ident, client, messages, selected_tools, agent, request_id, deadline, force=True)
+            options = output_options()
+            result = client.chat(messages, tools=selected_tools, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta, **options)
         check_turn()
         flush(True)
         for index, data in tool_parts.items():

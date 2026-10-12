@@ -1,0 +1,50 @@
+# 全局上下文管理助手
+
+`context` 是运行时服务角色。主控、文件、电脑、软件、浏览器、搜索、编程和评测助手的每次模型请求均经过同一个预算入口。业务 Agent 不需要主动调度它；它没有业务工具，不会递归压缩自己。
+
+## Claude Code 对齐依据
+
+2026-10-12 查阅的官方资料：
+
+- [How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)：先清理旧工具输出，再总结会话；保留请求和关键代码信息，避免反复压缩却不能释放空间。
+- [Model configuration](https://code.claude.com/docs/en/model-config#context-window-and-auto-compaction)：阈值取决于模型和可配置窗口，固定 95% 不是所有模型的规则。
+- [Best practices](https://code.claude.com/docs/en/best-practices#manage-context-aggressively)：摘要保留关键决策、文件状态和代码信息；可以指定压缩重点，并保留近期原文。
+- [Memory](https://code.claude.com/docs/en/memory#instructions-seem-lost-after-compact)：持久规则需在压缩后重新注入。
+
+本实现对齐公开策略，使用现有 OpenAI 兼容接口做客户端摘要，不依赖 Claude 专属缓存编辑 API，不声称复制其未公开内部算法。跨会话用户偏好学习、CLAUDE.md 层级加载和手动 `/compact` 命令不在本次实现范围；压缩重点通过配置指定。
+
+## 分层处理
+
+1. **规则层**：system prompt 完整保留；恢复时按当前配置重新生成，历史摘要不会变成系统权限。
+2. **近期工作层**：最新 user 消息、最近工具批次及其调用/返回保留原文。未返回的调用不被总结成已完成工作。
+3. **微压缩层**：达到触发预算的 `micro_ratio` 后，对较早工具输出做带截断标记的 JSON 投影，默认保留最近五个结果。
+4. **摘要层**：微压缩后仍达到阈值，启动上下文助手。分片合并历史和已有摘要，记录目标/约束、决策、真实证据、未完成工作/下一步；保留拒绝、失败、来源、变更路径和必要代码信息。
+5. **完整档案层**：原消息、工具事件和执行树继续保存。摘要只替换模型活动上下文，不删除历史或重跑工具。
+
+检查点写入成功后，运行时原地替换当前 Agent 的消息列表，继续原来的模型/工具循环，不重新派发业务任务。
+
+## 全局预算配置
+
+`config.yaml` 的 `context_management` 默认假设模型窗口为 **256000 tokens（256k）**，未配置模型也沿用此值。自动摘要规则：常规窗口到配置边界时触发；1M 及以上窗口在边界前预留 33000，因此 1M 的默认摘要触发值为 **967000**。这是本项目依据上述官方描述采用的规则，不是自动探测供应商容量，也不是对所有 Claude 模型内部实现的断言。微压缩仍从摘要触发值的 60% 开始，微压缩后仍到达阈值才调用摘要助手。
+
+预算包含 system、消息和工具 schema。兼容接口没有通用 tokenizer，当前用序列化 UTF-8 字节数除以二估算；通常偏保守，但不是精确供应商计数，也不能保证覆盖所有模型的分词情况。默认 256k 是用户指定的容量假设，不是对 `deepseek-flash` 容量的声明。可以通过 `window_tokens` 配置实际窗口，通过 `auto_compact_window_tokens` 提前摘要；`null` 表示自动规则，显式阈值最大不超过窗口。`models.<精确模型名>` 覆盖全局配置，切换模型后的下一次请求重新解析规则。
+
+`output_reserve_tokens` 与 `safety_buffer_tokens` 不再从自动摘要触发值扣除。正常请求的 `max_tokens` 上限为输出预留值，在窗口边界附近按估算剩余空间缩小；摘要请求使用 `summary_tokens`，其输入预算另行保留摘要输出和安全余量。分片目标增至 64000、单次压缩最多 128 次模型调用，以容纳 256k/1M 历史，具体请求仍会检查预算。供应商明确返回上下文超限时，强制摘要并重试原请求一次，避免估算偏差造成无限重试。
+
+最新输入、system 或近期证据本身太大时明确报错，不会静默删除。摘要失败、空响应、非法工具调用、摘要超预算、释放空间不足或取消时，原活动消息不替换。摘要不能把拒绝变成授权或把计划当作已完成。
+
+## 持久化与恢复
+
+默认数据库为 `.marvis/marvis.sqlite3`。
+
+- `events.context_usage` 记录角色、窗口、触发值、估算用量。
+- `context_compaction_start/context_model_start/context_compaction_error` 记录上下文助手运行与错误。
+- `events.context_compaction` 和同名 `entries` 节点保存压缩阶段、目标角色、消息、前后用量和源上下文指纹，不保存 system 副本。
+- 主控投影遇到自己在当前祖先路径上的检查点，用其消息替换之前历史，再拼接后续节点。
+- 业务助手读取自己在当前祖先路径上最近的 `agent_context` 或 `context_compaction`，不读取其他助手检查点。
+- 切到压缩前节点恢复当时历史；其他分支摘要不混入。分支到新聊天继承所选路径和检查点，删除原会话不会删除新分支副本。
+- 重启后加载已保存上下文；未完成任务仍按已有规则标为中断，不自动重放任务或工具。
+
+办公室和团队面板展示上下文助手；压缩时显示活动，完成后返回原 Agent。App/TUI 执行过程显示状态与用量变化。旧截图仍为加入上下文助手前的演示。
+
+测试：`python -m unittest discover -s tests -p 'test_context_manager.py' -v`，覆盖全角色触发、预算、微压缩、协议配对、异常、取消、超限重试、重启和分支隔离。

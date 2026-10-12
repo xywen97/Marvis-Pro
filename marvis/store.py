@@ -124,7 +124,7 @@ class Store:
             return ident
 
     def record_event_entry(self, task_id, event_id, kind, data, created=None):
-        types = {'agent_context':('agent_context','meta'), 'assistant_note':('thinking','assistant'), 'tool_start':('tool_call','assistant'),
+        types = {'context_compaction':('context_compaction','meta'), 'agent_context':('agent_context','meta'), 'assistant_note':('thinking','assistant'), 'tool_start':('tool_call','assistant'),
                  'tool_result':('tool_result','tool'), 'tool_error':('tool_result','tool'), 'rejected':('tool_result','tool')}
         if kind not in types: return
         with self.lock:
@@ -134,6 +134,7 @@ class Store:
             entry_kind, role = types[kind]
             content = data.get('text','') if entry_kind == 'thinking' else json.dumps(data,ensure_ascii=False)
             if entry_kind == 'agent_context': content = '独立助手上下文检查点：' + data['agent']
+            if entry_kind == 'context_compaction': content = '上下文压缩检查点：' + data['agent'] + '（' + data['stage'] + '）'
             self.append_entry(last['session_id'],'event-'+str(event_id),entry_kind,role,content,data,task_id,last['id'],event_id,created)
 
     def entry_branch(self, session_id, leaf=None):

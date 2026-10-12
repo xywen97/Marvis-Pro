@@ -91,7 +91,7 @@ class Coordinator:
         system = build_worker_prompt(actor, self.settings, tools, rounds)
         history = []
         for node in self.runtime.store.entry_branch(self.session_id):
-            if node['kind'] == 'agent_context' and node['data'].get('agent') == actor:
+            if node['kind'] in ('agent_context', 'context_compaction') and node['data'].get('agent') == actor:
                 history = node['data']['messages']
             if node['kind'] == 'user' and node['task_id'] != self.ident:
                 task = self.runtime.store.one('SELECT status FROM tasks WHERE id=?', (node['task_id'],))
@@ -149,10 +149,7 @@ class Coordinator:
         validate(envelope, RESULT_SCHEMA)
         # Private provider context is attached to an execution-tree anchor. Branch
         # navigation/forking naturally selects only the corresponding ancestry.
-        try: saved = self.runtime.bounded_context(messages)[1:]
-        except ValueError:
-            saved = [messages[-1]] if messages[-1]['role'] == 'user' else []
-            saved.append({'role': 'assistant', 'content': '先前助手上下文超过预算，仅保留统一报告：' + tool_message(envelope)})
+        saved = messages[1:]
         self.runtime.store.event(self.ident, 'agent_context', {'agent': actor, 'request_id': request_id, 'messages': saved})
         self.runtime.store.event(self.ident, 'agent_result', {'agent': actor, 'request_id': request_id, 'result': envelope})
         self.completed_requests.add(request_id)

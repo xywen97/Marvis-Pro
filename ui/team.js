@@ -26,6 +26,8 @@ window.MarvisTeam = (() => {
   const marker=el('span','team-transfer','✦');marker.setAttribute('aria-hidden','true');box.append(marker);
  }
  function destination(event){
+  if(['context_compaction_start','context_model_start','context_compaction_error'].includes(event.kind))return 'context';
+  if(event.kind==='context_compaction')return event.content.agent||'main';
   if(['model_start','agent_start'].includes(event.kind))return event.content.agent||'main';
   if(['tool_result','tool_error','rejected'].includes(event.kind))return event.content.agent||'main';
   if(event.kind==='agent_result')return 'main';

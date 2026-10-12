@@ -66,6 +66,33 @@ orchestration:
     browser: 6
     search: 6
 
+# 全局上下文规则：主控与所有业务/评测助手共用，压缩助手自身不递归触发。
+context_management:
+  enabled: true
+  # 未指定模型容量时默认假设 256k；models 可按精确模型名覆盖。
+  # auto: 常规窗口到边界时摘要；1M 及以上窗口预留 33000（1M -> 967k）。
+  # 可设置 auto_compact_window_tokens 提前摘要；超过窗口的值会被封顶。
+  # 当前无供应商 tokenizer，使用 UTF-8 字节数 / 2 估算（含工具 schema）。
+  window_tokens: 256000
+  auto_compact_window_tokens: null
+  output_reserve_tokens: 4096
+  safety_buffer_tokens: 2048
+  micro_ratio: 0.60
+  keep_tool_results: 5
+  old_tool_chars: 1200
+  recent_units: 2
+  summary_tokens: 2048
+  chunk_tokens: 64000
+  max_summary_calls: 128
+  compact_instructions: "保留用户限制、修改文件路径、测试命令及结果、拒绝和未完成工作。"
+  # 可按精确 model 名称覆盖上述全局配置：
+  # models:
+  #   large-model:
+  #     window_tokens: 1000000   # 默认在约 967000 时摘要
+  #   custom-model:
+  #     window_tokens: 512000
+  #     auto_compact_window_tokens: 400000  # 提前触发
+
 # 交付质量门禁：默认开启，不可用/不通过不作为合格成果交付。
 evaluation:
   enabled: true

@@ -1,6 +1,6 @@
 'use strict';
 window.MarvisOffice = (() => {
- const names={main:'MarvisXY',computer:'电脑管家',file:'文件管家',app:'软件管家',browser:'浏览器管家',search:'搜索助手',coding:'编程助手',evaluation:'评测助手'};
+ const names={main:'MarvisXY',computer:'电脑管家',file:'文件管家',app:'软件管家',browser:'浏览器管家',search:'搜索助手',coding:'编程助手',evaluation:'评测助手',context:'上下文管理助手'};
  const labels={idle:'待命',thinking:'思考与规划',working:'执行工具',waiting:'等待你确认',done:'任务完成',error:'任务异常',stopped:'任务已停止'};
  const drawing=`<svg viewBox="0 0 240 220" aria-hidden="true">
   <ellipse cx="124" cy="187" rx="90" ry="14" class="desk-shadow"/>
@@ -42,7 +42,9 @@ window.MarvisOffice = (() => {
   if(task){
    let agent='main', tool='', phase='thinking';
    for(const event of task.events){
-    if(event.kind==='tool_start'){agent=event.content.agent||role(event.content.tool);tool=event.content.tool;phase='working';}
+    if(['context_compaction_start','context_model_start'].includes(event.kind)){agent='context';tool='';phase='thinking';}
+    else if(event.kind==='context_compaction'){agent=event.content.agent||'main';tool='';phase='thinking';}
+    else if(event.kind==='tool_start'){agent=event.content.agent||role(event.content.tool);tool=event.content.tool;phase='working';}
     else if(['model_start','agent_start','tool_result','tool_error','rejected'].includes(event.kind)){agent=event.content.agent||'main';tool='';phase='thinking';}
     else if(event.kind==='agent_result'){agent='main';tool='';phase='thinking';}
    }

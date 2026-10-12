@@ -65,7 +65,7 @@ window.AgentProgress = (() => {
     const tool=d.call_id?step.tools.find(t=>t.key===d.call_id):[...step.tools].reverse().find(t=>t.start?.content.tool===d.tool&&!t.result);
     if(tool){if(event.kind==='approval')tool.approval=event;else if(event.kind==='approved')tool.approved=event;else tool.result=event;}
     else step.events.push(event);
-   }else if(['stream_fallback','failed','cancelled','rejected','cancel_requested'].includes(event.kind))step.events.push(event);
+   }else if(['stream_fallback','failed','cancelled','rejected','cancel_requested','context_compaction_start','context_compaction','context_compaction_error'].includes(event.kind))step.events.push(event);
   }
   return result.filter(s=>s.model||s.notes.length||s.tools.length||s.events.length);
  }

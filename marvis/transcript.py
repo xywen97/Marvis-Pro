@@ -78,7 +78,12 @@ def process_nodes(task, include_stream=True, expanded=None, frame=0):
         kind, data = event['kind'], event['content']
         if kind == 'model_start': current = data['step']
         parent = group(data.get('step', current))
-        if kind == 'model_start': parent['text'] = f"Step {current} · {data.get('model', '')}"
+        if kind == 'context_compaction_start':
+            parent['children'].append(node(data['text'], 'muted'))
+        elif kind == 'context_compaction':
+            parent['children'].append(node(f"上下文已压缩 · {data['agent']} · {data['before_tokens']} → {data['after_tokens']} 估算 tokens", 'muted'))
+        elif kind == 'context_compaction_error': parent['children'].append(node(data['text'], 'error'))
+        elif kind == 'model_start': parent['text'] = f"Step {current} · {data.get('model', '')}"
         elif kind in ('assistant_note', 'assistant_stream'):
             if kind == 'assistant_note' or include_stream:
                 parent['children'].append(node('╭ 处理说明' + (' · 生成中' if kind == 'assistant_stream' else ''), 'thought', [node(data['text'], 'thought')]))

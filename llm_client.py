@@ -157,7 +157,8 @@ class LLMClient:
 
     def chat(self, messages: list[dict[str, str]], temperature: float | None = None,
              tools: list[dict[str, Any]] | None = None,
-             tool_choice: str | dict[str, Any] = "auto", on_delta=None, on_tool_delta=None) -> ChatResult:
+             tool_choice: str | dict[str, Any] = "auto", on_delta=None, on_tool_delta=None,
+             max_tokens: int | None = None) -> ChatResult:
         """调用 /chat/completions。
 
         messages: OpenAI 消息数组 [{"role": "system"|"user"|"assistant"|"tool", ...}]
@@ -179,6 +180,8 @@ class LLMClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
+        if max_tokens is not None:
+            payload['max_tokens'] = max_tokens
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             url,
