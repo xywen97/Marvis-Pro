@@ -24,7 +24,7 @@ async function run(){
   assert.equal(await page.locator('.chat-trace .message').count(),0,'model prose must stay outside execution traces');
   const tools=page.locator('.agent-tool');await tools.first().waitFor({state:'attached'});
   const traces=page.locator('.trace-details');assert.equal(await traces.first().getAttribute('open'),null);
-  await page.waitForFunction(()=>document.querySelector('.trace-preview')?.textContent.includes('system_info'));
+  await page.waitForFunction(()=>document.querySelector('.trace-preview')?.textContent.includes('检查电脑信息'));
   const savedTrace=await traces.first().elementHandle();await traces.first().locator(':scope > summary').click();
   assert((await tools.first().textContent()).includes('生成调用'),'tool should appear while its arguments are generated');
   const details=tools.first().locator('details');assert.equal(await details.getAttribute('open'),null);
@@ -48,6 +48,7 @@ async function run(){
   assert(new Set(responseSamples).size>=3,'final answer must stream directly in its own conversation bubble');
   assert(await responseNode.evaluate(node=>node===document.querySelectorAll('#messages > .message.assistant')[2]),'completion retains the streaming reply DOM');
   assert.equal(await page.locator('.agent-step').count(),2,'only tool-bearing steps belong in execution traces');
+  assert.equal(await page.locator('.agent-step .step-heading').count(),0,'execution details show tools without redundant step headings');
   assert.equal(await traces.count(),2,'different execution blocks must stay separate');
   assert.equal(await traces.nth(1).getAttribute('open'),null,'new blocks must default to collapsed independently');
   await traces.nth(1).locator(':scope > summary').click();
@@ -68,8 +69,8 @@ async function run(){
    const completed=root.querySelector('.trace-preview').textContent;
    root.remove();return {truncated,next,stable,completed};
   });
-  assert.equal(Array.from(previewChecks.truncated).length,50);assert(previewChecks.truncated.endsWith('...'));
-  assert.equal(previewChecks.next,'agent_report {"id":"worker"}');assert(previewChecks.stable);assert.equal(previewChecks.completed,'');
+  assert.equal(previewChecks.truncated,'分配任务');
+  assert.equal(previewChecks.next,'汇总任务结果');assert(previewChecks.stable);assert.equal(previewChecks.completed,'');
   const statusChecks=await page.evaluate(()=>{
    const root=document.createElement('div');document.body.append(root);
    const task={status:'failed',events:[
@@ -90,7 +91,29 @@ async function run(){
    const rejected=root.querySelectorAll('.tool-state')[3].textContent;
    root.remove();return {labels,failedText,rejected};
   });
-  assert.deepEqual(statusChecks.labels,['已完成 · 执行过程','存在错误 · 执行过程','存在错误 · 执行过程','已完成 · 执行过程','任务中断 · 执行过程']);
+  assert.deepEqual(statusChecks.labels,['已执行 1 项操作','已执行 1 项操作 · 1 项失败','已执行 1 项操作 · 1 项失败','已执行 1 项操作 · 1 项已拒绝','执行已中断 · 执行记录']);
+  const grouped=await page.evaluate(()=>{
+   const task={id:'grouped',status:'running',events:[
+    {id:1,kind:'assistant_note',content:{step:1,text:'先检查环境。'}},
+    {id:2,kind:'tool_start',content:{step:1,call_id:'a',tool:'system_info',arguments:{}}},
+    {id:3,kind:'tool_result',content:{step:1,call_id:'a',result:{}}},
+    {id:4,kind:'tool_start',content:{step:2,call_id:'b',tool:'disk_usage',arguments:{}}},
+    {id:5,kind:'tool_error',content:{step:2,call_id:'b',result:{error:'失败'}}}]};
+   const first=AgentProgress.conversation(task).items;
+   const root=document.createElement('div');AgentProgress.updateTrace(root,task,first[1].groups);
+   const detail=root.firstElementChild;detail.open=true;
+   task.events.push({id:6,kind:'tool_start',content:{step:3,call_id:'c',tool:'agent_report',arguments:{}}});
+   const next=AgentProgress.conversation(task).items;AgentProgress.updateTrace(root,task,next[1].groups);
+   const result={kinds:next.map(item=>item.kind),steps:next[1].groups.length,keyStable:first[1].key===next[1].key,
+    expanded:root.firstElementChild===detail&&detail.open,label:root.querySelector('.trace-label').textContent};
+   task.events.push({id:7,kind:'assistant_note',content:{step:4,text:'补充检查。'}},
+    {id:8,kind:'tool_start',content:{step:4,call_id:'d',tool:'file_read',arguments:{}}});
+   result.withNote=AgentProgress.conversation(task).items.map(item=>item.kind);return result;
+  });
+  assert.deepEqual(grouped.kinds,['reply','trace']);assert.equal(grouped.steps,3);
+  assert(grouped.keyStable&&grouped.expanded,'growing execution groups retain their key and open state');
+  assert.equal(grouped.label,'正在执行 3 项操作 · 1 项失败');
+  assert.deepEqual(grouped.withNote,['reply','trace','reply','trace'],'notes retain their chronological position between tool groups');
   assert(statusChecks.failedText[0].includes('助手失败'));assert(statusChecks.failedText[1].includes('进程退出失败'));
   assert.equal(statusChecks.rejected,'已拒绝');
   await page.evaluate(()=>{document.querySelector('.tool-details').open=false;});
@@ -116,7 +139,7 @@ async function run(){
   await page.screenshot({path:'/tmp/marvis-agent-steps.png'});
   const original=await page.evaluate(()=>session);const source=await page.evaluate(async()=>await api('tree?session='+session));
   const noteText=await thought.locator('.bubble-actions').evaluate(node=>node.value.text);
-  await thought.getByRole('button',{name:'复制文本',exact:true}).click();
+  await thought.hover();await thought.getByRole('button',{name:'复制文本',exact:true}).click();
   await page.waitForFunction(async text=>(await navigator.clipboard.readText())===text,noteText);
   await thought.getByRole('button',{name:'分支到新聊天',exact:true}).click();
   await page.waitForFunction(sid=>session!==sid,original);
@@ -128,7 +151,7 @@ async function run(){
   await page.waitForSelector('#messages > .message.assistant');
   assert.equal(await page.locator('.chat-trace .message').count(),0);
   assert(await page.locator('#messages > .message.assistant').getByRole('button',{name:'分支到新聊天',exact:true}).isEnabled());
-  console.log(`Agent steps UI passed: ${new Set(samples).size} note frames; independent default collapse; live tool/argument preview; 50 Unicode characters; stable expanded state; result command; keyboard toggle.`);
+  console.log(`Agent steps UI passed: ${new Set(samples).size} note frames; grouped operation counts; readable current action; stable expanded state; result command; keyboard toggle.`);
  } finally {if(browser)await browser.close();fixture.stdin.end();}
 }
 run().catch(error=>{console.error(error);process.exitCode=1});

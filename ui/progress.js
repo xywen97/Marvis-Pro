@@ -101,7 +101,11 @@ window.AgentProgress = (() => {
     message:event===finalEvent?finalMessage:null,
     note:event.kind==='assistant_note'||group.tools.length>0,
     streaming:busy(task)&&group.step===latest&&event.kind==='assistant_stream'});
-   if(group.tools.length||group.events.length)items.push({kind:'trace',key:`trace-${task.id}-${group.step}`,group});
+   if(group.tools.length||group.events.length){
+    const previous=items.at(-1);
+    if(previous?.kind==='trace')previous.groups.push(group);
+    else items.push({kind:'trace',key:`trace-${task.id}-${group.step}`,groups:[group]});
+   }
   }
   return {items,finalRendered:!!finalEvent};
  }
@@ -118,23 +122,25 @@ window.AgentProgress = (() => {
   const errors=tools.filter(tool=>tool.result?.kind==='tool_error'||tool.result?.content.result?.error||tool.result?.content.result?.status==='failed').length;
   const pendingTools=tools.some(tool=>!tool.result);
   const interrupted=groups.some(group=>group.events.some(event=>['failed','cancelled','cancel_requested'].includes(event.kind)));
-  const label=task.branch_cutoff?'历史截点':errors?'存在错误':pendingTools?(busy(task)?'执行中':'未完成'):interrupted?'任务中断':'已完成';
-  detail.querySelector('.trace-label').textContent=`${label} · 执行过程`;
+  const rejected=tools.filter(tool=>tool.result?.kind==='rejected').length;
+  const label=task.branch_cutoff?'历史记录':pendingTools?(busy(task)?'正在执行':'执行未完成'):interrupted?'执行已中断':'已执行';
+  detail.querySelector('.trace-label').textContent=tools.length
+   ?`${label} ${tools.length} 项操作${errors?` · ${errors} 项失败`:''}${rejected?` · ${rejected} 项已拒绝`:''}`
+   :`${label} · 执行记录`;
   const latest=steps(task).at(-1)?.step;
   const activeTools=busy(task)?groups.flatMap(group=>group.tools):[];
   const pending=activeTools.filter(tool=>!tool.result);
   const current=pending.find(tool=>tool.start)||pending.at(-1);
   const data=(current?.start||current?.stream)?.content;
-  const args=typeof data?.arguments==='string'?data.arguments:JSON.stringify(data?.arguments);
-  const preview=data?.tool==='delivery_evaluate'?'DeepEval 正在执行用户评测':data?`${data.tool||'准备工具调用'}${args?' '+args:''}`.replace(/\s+/g,' ').trim():'';
+  const actions={agent_dispatch:'分配任务',agent_report:'汇总任务结果',agent_inspect:'查看任务进展',system_info:'检查电脑信息',disk_usage:'检查磁盘空间',file_read:'读取文件',file_write:'写入文件',file_search:'搜索文件',web_search:'搜索资料',browser_open:'打开网页',code_execute:'运行代码',delivery_evaluate:'评估任务结果'};
+  const preview=data?(current.approval&&!current.approved?'等待确认 · ':'')+(actions[data.tool]||'处理工具操作'):'';
   const characters=Array.from(preview);
   detail.querySelector('.trace-preview').textContent=characters.length>50?characters.slice(0,47).join('')+'...':preview;
   sync(detail.lastElementChild,groups.map(group=>({
    key:'step-'+group.step,
-   make:()=>{const node=el('section','agent-step');node.append(el('div','step-heading'),el('div','step-content'));return node;},
+   make:()=>{const node=el('section','agent-step');node.append(el('div','step-content'));return node;},
    update:node=>{
     const active=busy(task)&&group.step===latest;node.classList.toggle('step-active',active);
-    node.firstElementChild.textContent=group.step?`Step ${group.step} · ${active?'处理中':'工具记录'}`:'工具执行';
     const items=[];
     items.push(...group.tools.map(tool=>({key:'tool-'+tool.key,make:makeTool,update:node=>updateTool(node,tool,task)})));
     items.push(...group.events.map(event=>({key:'event-'+event.id,make:()=>el('div','progress-status'),update:node=>{node.textContent=event.content.text||event.content.action||event.kind;}})));
