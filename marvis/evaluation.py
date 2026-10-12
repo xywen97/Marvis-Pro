@@ -1,8 +1,9 @@
-"""DeepEval integration and engine-owned delivery receipts; no replacement scorer."""
+"""User-initiated DeepEval assessment with engine-owned evidence; no replacement scorer."""
 from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import selectors
 import signal
@@ -15,6 +16,18 @@ from marvis.team import tool_message
 
 ROOT = Path(__file__).resolve().parents[1]
 
+EVALUATION_INTAKE = ('评测助手已唤醒。请提供：\n\n'
+                     '1. 评测对象：代码、输出、指标或任务的具体内容，或授权目录内的文件路径。\n'
+                     '2. 评测要求：预期结果、验收标准、约束；评估合规性时请提供适用规范。\n'
+                     '3. 可选证据：测试结果、数据、参考资料或当前对话中的来源任务。\n\n'
+                     '点击右侧评测助手填写信息，或使用 /evaluate 后接 JSON（candidate、requirements 必填）。'
+                     '评测完成后，需求与结果将一并交给主控汇总；不会自动修改成果。')
+
+
+def is_evaluation_wakeup(prompt):
+    return prompt.strip() in ('/evaluate', '/eval', '/评测', '评测助手') or bool(
+        re.match(r'^(?:请)?(?:唤醒|启动|开启|调用|使用)评测助手[。！!\s]*$', prompt.strip()))
+
 
 def enabled(runtime):
     return (runtime.config.get('evaluation') or {}).get('enabled', True) is not False
@@ -24,10 +37,19 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def evidence_snapshot(coordinator):
+def evidence_snapshot(coordinator, source_task_id=None, paths=None):
     """Read actual artifacts from engine results, never from candidate-supplied evidence."""
-    rows = []; paths = set(); source_paths = {}
-    for event in coordinator.runtime.store.events(coordinator.ident):
+    rows = []; requested_paths = set(paths or []); paths = set(); source_paths = {}
+    source = source_task_id or coordinator.ident
+    visible_ids = None
+    if source_task_id:
+        task = coordinator.runtime.store.one('SELECT session_id FROM tasks WHERE id=?', (source_task_id,))
+        branch = coordinator.runtime.store.entry_branch(coordinator.session_id)
+        if not task or task['session_id'] != coordinator.session_id or not any(n['task_id'] == source for n in branch):
+            raise ValueError('只能评测当前对话所选历史路径中的来源任务。')
+        visible_ids = {n['event_id'] for n in branch if n['task_id'] == source and n['event_id']}
+    for event in coordinator.runtime.store.events(source):
+        if visible_ids is not None and event['id'] not in visible_ids: continue
         data = event['content']
         if event['kind'] in ('tool_result', 'tool_error', 'rejected') and data.get('tool') not in ('agent_dispatch', 'delivery_evaluate'):
             rows.append({'kind': event['kind'], 'agent': data.get('agent'), 'tool': data.get('tool'),
@@ -39,7 +61,8 @@ def evidence_snapshot(coordinator):
                         if isinstance(result.get(key), str): paths.add(result[key])
                 elif data.get('tool') in ('file_read', 'file_read_lines', 'code_check') and isinstance(result.get('path'), str):
                     source_paths[result['path']] = None
-    if len(paths) > 20: raise ValueError('产物超过 20 个文件评测上限，请分阶段交付。')
+    paths.update(requested_paths)
+    if len(paths) > 20: raise ValueError('产物超过 20 个文件评测上限，请分阶段评测。')
     artifacts = []; sources = []
     selected_sources = [p for p in source_paths if p not in paths][-8:]
     for value in sorted(paths) + selected_sources:
@@ -69,15 +92,19 @@ def evidence_snapshot(coordinator):
     return snapshot
 
 
-def measure(coordinator, candidate, request_id):
+def measure(coordinator, request, request_id):
+    if not enabled(coordinator.runtime): raise ValueError('用户评测功能当前已禁用。')
+    candidate = request['candidate']
     options = coordinator.runtime.config.get('evaluation') or {}
     threshold = float(options.get('threshold', .8))
     if not 0 < threshold <= 1: raise ValueError('评测 threshold 必须在 (0, 1]。')
     if not candidate.strip() or len(candidate) > 60000: raise ValueError('候选交付为空或超过 60000 字符。')
-    snapshot = evidence_snapshot(coordinator)
+    snapshot_args = {'source_task_id': request.get('source_task_id'), 'paths': request.get('paths')}
+    snapshot = evidence_snapshot(coordinator, **snapshot_args)
     evidence_digest = digest(snapshot)
-    task = coordinator.runtime.store.one('SELECT prompt FROM tasks WHERE id=?', (coordinator.ident,))
-    payload = {'input': task['prompt'], 'candidate': candidate, 'evidence': json.dumps(snapshot, ensure_ascii=False),
+    payload = {'input': request['requirements'], 'subject_type': request.get('subject_type', '输出'),
+               'user_evidence': request.get('evidence', ''),
+               'candidate': candidate, 'evidence': json.dumps(snapshot, ensure_ascii=False),
                'evidence_digest': evidence_digest, 'threshold': threshold}
     python = options.get('python') or sys.executable
     timeout = max(10, min(180, int(options.get('timeout', 120))))
@@ -110,9 +137,10 @@ def measure(coordinator, candidate, request_id):
                         message = json.loads(line)
                         if message['kind'] == 'error': raise RuntimeError('DeepEval：' + message['error'])
                         if message['kind'] == 'result':
-                            if digest(evidence_snapshot(coordinator)) != evidence_digest:
+                            if digest(evidence_snapshot(coordinator, **snapshot_args)) != evidence_digest:
                                 raise ValueError('评测期间产物发生变化，结果已失效。')
-                            return {**message, 'candidate_sha256': digest(candidate), 'evidence_digest': evidence_digest,
+                            return {**message, 'user_initiated': True, 'request_sha256': digest(request),
+                                    'candidate_sha256': digest(candidate), 'evidence_digest': evidence_digest,
                                     'judge_model': client.model, 'judge_calls': calls}
                         if message['kind'] != 'judge': raise ValueError('未知评测协议消息。')
                         calls += 1

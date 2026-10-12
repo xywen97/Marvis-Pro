@@ -206,6 +206,7 @@ window.MarvisOffice = (() => {
   const agent=snapshot.agents.find(a=>a.id===selected),item=modes[selected];
   $('#office-agent-name').textContent=names[selected];$('#office-agent-role').textContent=agent.role;
   $('#office-agent-state').textContent=statusText(item);
+  $('#office-evaluation-start').hidden=selected!=='evaluation';
   $('#office-agent-work').textContent=item.task?item.task.prompt:(agent.guidance||'没有正在执行的任务。点击工位可以查看各管家的状态。');
   const action=$('#office-agent-open');action.hidden=!item.task;action.onclick=()=>safe(async()=>{session=item.task.session_id;showPage('chat');await renderMessages();});
   const list=$('#office-recent');

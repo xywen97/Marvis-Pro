@@ -21,6 +21,7 @@ window.MarvisTeam = (() => {
    const track=el('div','context-track');track.setAttribute('role','progressbar');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');
    track.append(el('span','context-fill'));meter.append(caption,track);info.append(meter);
    row.append(art,info,el('span','agent-status','待命'));row.onclick=()=>{
+    if(agent.id==='evaluation'){openEvaluation();return;}
     const task=state.tasks.find(t=>t.session_id===session&&['running','waiting_approval'].includes(t.status));
     if(task)safe(async()=>{session=task.session_id;showPage('chat');await renderMessages();});else showPage('office');
    };box.append(row);

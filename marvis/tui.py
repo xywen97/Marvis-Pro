@@ -36,6 +36,7 @@ HELP = '''输入自然语言，或使用以下命令：
 /web URL                     读取网页
 /browse URL                  打开网页（需确认）
 /web-search QUERY            网络搜索
+/evaluate [JSON]             唤醒评测助手；提交对象与要求后由主控汇总
 /mode local|efficiency       切换模式
 /model URL MODEL             配置效率模式模型；Key 从 .env 读取
 /roots PATH [PATH ...]        设置授权目录，空格路径请加引号
@@ -56,6 +57,7 @@ F1–F5 页面 · ↑↓滚动/选择联想 · Tab补全/切换页面 · Ctrl+R�
 # Exact aliases only: ambiguous prefixes such as /n never execute a command.
 # Already short names remain unchanged and still appear in parentheses.
 SHORT_COMMANDS = {
+    '/evaluate':'eval',
     '/new':'new', '/tree':'t', '/sessions':'ls', '/session':'ss',
     '/archives':'las', '/archive':'ar', '/restore':'rs', '/delete':'del',
     '/files':'f', '/read':'r', '/write':'w', '/organize':'org',
@@ -68,6 +70,7 @@ SHORT_COMMANDS = {
     '/help':'h', '/quit':'q',
 }
 ALIASES = {'/' + short: name for name, short in SHORT_COMMANDS.items()}
+ALIASES['/评测'] = '/evaluate'
 # Keep suggestions, aliases and /help in sync, including argument hints.
 COMMANDS = []
 help_lines = []
@@ -173,7 +176,13 @@ class Terminal:
             '/browse': ('browser_open', lambda: {'url': rest[0]}),
             '/web-search': ('web_search', lambda: {'query': ' '.join(rest)}),
         }
-        if cmd in tools:
+        if cmd == '/evaluate':
+            if rest:
+                self.task('delivery_evaluate', json.loads(' '.join(rest)), '用户主动评测')
+            else:
+                from marvis.evaluation import EVALUATION_INTAKE
+                self.local_text = EVALUATION_INTAKE; self.page = 0
+        elif cmd in tools:
             name, build = tools[cmd]; self.task(name, build(), text)
         elif cmd == '/quit': return False
         elif cmd == '/trace': self.show_trace = not self.show_trace

@@ -15,6 +15,7 @@ $('#prompt').addEventListener('input',()=>{commandHidden=false;commandIndex=0;up
 safe(async()=>{appCommands=await api('commands');updateCommandMenu();});
 async function runAppCommand(text){
  const result=await api('command',{text,session_id:session});session=result.session_id;
+ if(result.view==='evaluation'){openEvaluation();return;}
  if(result.view==='tree'){await openStepTree();return;}
  if(result.view==='trace'){document.body.classList.toggle('hide-traces');return;}
  if(result.view==='result'){const tools=[...document.querySelectorAll('#messages .tool-details')];const target=tools[Number(result.arguments[0]||tools.length)-1];if(!target)throw Error('当前对话没有对应工具结果。');target.open=!target.open;if(target.open){const trace=target.closest('.trace-details');if(trace)trace.open=true;}return;}
@@ -25,6 +26,51 @@ async function runAppCommand(text){
  if(result.text){commandDialog.querySelector('pre').textContent=result.text;commandDialog.showModal();}
  if(result.notice)toast(result.notice);
 }
+
+const evaluationDialog=el('dialog','evaluation-dialog');evaluationDialog.id='evaluation-dialog';
+evaluationDialog.innerHTML=`<h2>唤醒评测助手</h2><p class="hint">请提供评测对象与要求。评测完成后，需求和结果将交给主控汇总。</p>
+ <form id="evaluation-form" class="form-grid">
+ <label>评测对象类型<select name="subject_type"><option>代码</option><option>输出</option><option>指标</option><option>任务</option><option>其他</option></select></label>
+ <label>评测对象<textarea name="candidate" rows="5" maxlength="60000" required placeholder="粘贴代码、输出、指标或任务说明；评测文件时填写文件说明并在下方提供路径。"></textarea></label>
+ <label>评测要求<textarea name="requirements" rows="3" maxlength="10000" required placeholder="预期结果、验收标准与约束；合规评测请提供适用规范。"></textarea></label>
+ <label>参考证据（可选）<textarea name="evidence" rows="2" maxlength="20000" placeholder="测试结果、数据或参考资料；用户提供的证据会单独标注。"></textarea></label>
+ <label>文件路径（可选，每行一个）<textarea name="paths" rows="2" placeholder="授权目录内的完整路径，只读评测。"></textarea></label>
+ <label>当前对话执行证据<select name="source_task_id"><option value="">不附带历史任务</option></select></label>
+ <p id="evaluation-error" class="hint" role="alert"></p>
+ <div class="dialog-actions"><button type="button" id="evaluation-cancel">取消</button><button type="submit" class="primary">开始评测</button></div></form>`;
+document.body.append(evaluationDialog);
+const officeEvaluation=btn('唤醒评测助手',()=>openEvaluation());officeEvaluation.id='office-evaluation-start';officeEvaluation.hidden=true;
+document.querySelector('.office-agent-card').append(officeEvaluation);
+let evaluationSession=null;
+function openEvaluation(){
+ evaluationSession=session;
+ const form=$('#evaluation-form'),select=form.elements.source_task_id;
+ select.replaceChildren(new Option('不附带历史任务',''));
+ for(const task of state?.tasks||[]){
+  if(task.session_id===session&&['completed','failed','cancelled'].includes(task.status))select.append(new Option(task.prompt.slice(0,60),task.id));
+ }
+ $('#evaluation-error').textContent='';
+ if(!evaluationDialog.open)evaluationDialog.showModal();
+ form.elements.candidate.focus();
+}
+$('#evaluation-cancel').onclick=()=>evaluationDialog.close();
+$('#evaluation-form').onsubmit=event=>{
+ event.preventDefault();safe(async()=>{
+  const form=event.target,button=form.querySelector('[type=submit]');
+  if(evaluationSession!==session){$('#evaluation-error').textContent='对话已切换，请重新唤醒评测助手。';return;}
+  const args={candidate:form.elements.candidate.value.trim(),requirements:form.elements.requirements.value.trim(),
+   subject_type:form.elements.subject_type.value,evidence:form.elements.evidence.value.trim(),
+   paths:form.elements.paths.value.split('\n').map(p=>p.trim()).filter(Boolean)};
+  if(!args.candidate||!args.requirements){$('#evaluation-error').textContent='请填写评测对象和评测要求。';return;}
+  if(form.elements.source_task_id.value)args.source_task_id=form.elements.source_task_id.value;
+  button.disabled=true;
+  try{
+   const result=await api('tasks',{prompt:'用户主动评测：'+args.subject_type+'\n评测要求：'+args.requirements,
+    session_id:evaluationSession,action:{tool:'delivery_evaluate',arguments:args}});
+   session=result.session_id;evaluationDialog.close();form.reset();showPage('chat');await renderMessages();await refresh();
+  }catch(error){$('#evaluation-error').textContent=error.message;}finally{button.disabled=false;}
+ });
+};
 async function copyBubble(text){
  try{await navigator.clipboard.writeText(text);}catch(error){
   const field=el('textarea','clipboard-fallback');field.value=text;document.body.append(field);field.select();const ok=document.execCommand('copy');field.remove();$('#prompt').focus();if(!ok)throw Error('复制失败，请选择文本后复制。');

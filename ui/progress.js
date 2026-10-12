@@ -126,7 +126,7 @@ window.AgentProgress = (() => {
   const current=pending.find(tool=>tool.start)||pending.at(-1);
   const data=(current?.start||current?.stream)?.content;
   const args=typeof data?.arguments==='string'?data.arguments:JSON.stringify(data?.arguments);
-  const preview=data?.tool==='delivery_evaluate'?'DeepEval 正在评测交付':data?`${data.tool||'准备工具调用'}${args?' '+args:''}`.replace(/\s+/g,' ').trim():'';
+  const preview=data?.tool==='delivery_evaluate'?'DeepEval 正在执行用户评测':data?`${data.tool||'准备工具调用'}${args?' '+args:''}`.replace(/\s+/g,' ').trim():'';
   const characters=Array.from(preview);
   detail.querySelector('.trace-preview').textContent=characters.length>50?characters.slice(0,47).join('')+'...':preview;
   sync(detail.lastElementChild,groups.map(group=>({

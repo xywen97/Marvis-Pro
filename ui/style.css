@@ -83,6 +83,7 @@
 .tree-option.user{color:#3969cf}.tree-option.thinking{color:#8d99ac}.tree-option.tool_call{color:#7186a2}.tree-option.tool_result{color:#478d7c}
 .tree-option.selected,.tree-option:hover{background:#edf2ff}
 .command-dialog{width:min(760px,90vw)}.command-dialog pre{max-height:65vh;overflow:auto;white-space:pre-wrap}
+.evaluation-dialog{width:min(720px,90vw);max-height:90vh;overflow:auto}.evaluation-dialog textarea,.evaluation-dialog select{width:100%}
 .clipboard-fallback{position:fixed;left:-10000px;top:0}
 .hide-traces .agent-progress{display:none}
 

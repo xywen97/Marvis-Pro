@@ -32,6 +32,8 @@ class Model(BaseHTTPRequestHandler):
                 main = 'agent_dispatch' in names
                 if '这是失败后的状态说明' in request['messages'][0]['content']:
                     send({'content': '电脑管家已完成磁盘和内存检查；交付评测未通过，仍需修正结果说明。'})
+                elif '以下是用户主动唤醒评测助手' in request['messages'][0]['content']:
+                    send({'content': '这是用户主动评测，主控已汇总需求和评测结果。' + ('未满足全部要求，建议补充结果细节。' if EVALUATION_FAILURE else '对象满足用户指定要求。')})
                 elif EVALUATION and not names:
                     send({'content': json.dumps({'score': 2 if EVALUATION_FAILURE else 10, 'reason': '缺少检查结果细节' if EVALUATION_FAILURE else '任务与证据一致，交付可使用。'}, ensure_ascii=False)})
                 elif main and request['messages'][-1]['role'] == 'user':

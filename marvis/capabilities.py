@@ -53,9 +53,14 @@ DIRECTORY = field('string', '目标目录路径；优先使用用户提供或工
 FILE = field('string', '文件路径；优先使用用户提供或工具返回的绝对路径，必须在授权目录内。不是目录。')
 URL = field('string', '完整公开 HTTP(S) URL；不能包含用户名或密码，不能访问本机、私网或非公开地址。')
 TOOLS = [
-    schema('delivery_evaluate', '评测助手专用：使用 DeepEval 原生 G-Eval 对候选交付按任务完成度、证据一致性、交付质量评分。证据与产物从执行器读取，不能由模型伪造；返回分数、阈值、理由及候选/证据指纹。评测不能修改文件；失败或不可用不会放行。通过现有主控协议调用评测助手，context 为完整候选答案。', {
-        'candidate': field('string', '完整待交付答案；产物文件和验证证据由执行器自行收集，不在此提供虚构证据。', minLength=1, maxLength=60000),
-    }, ['candidate']),
+    schema('delivery_evaluate', '评测助手专用：仅由用户显式提交评测请求，使用 DeepEval 评估代码、输出、指标或任务是否符合用户要求。结果与需求交回主控汇总，不作为普通任务交付门禁。不能修改产物或自行调度。', {
+        'candidate': field('string', '待评测的代码、输出、指标、任务说明或文件说明。', minLength=1, maxLength=60000),
+        'requirements': field('string', '用户指定的目标、验收标准、约束或合规依据；缺少时先提醒用户补充。', minLength=1, maxLength=10000),
+        'subject_type': field('string', '评测对象类型。', enum=['代码', '输出', '指标', '任务', '其他']),
+        'evidence': field('string', '用户提供的参考、测试或数据；明确标为用户提供，不能冒充执行器验证。', maxLength=20000),
+        'paths': field('array', '用户选择的实际文件路径，只读快照，最多 20 个。', items={'type': 'string'}, maxItems=20),
+        'source_task_id': field('string', '可选：当前会话已选历史路径中的任务 ID，附带其真实执行证据。', maxLength=64),
+    }, ['candidate', 'requirements']),
     schema('code_check', '编程助手：无执行地检查 Python 或 JSON 语法，最多 2 MB UTF-8 文本。返回 valid、sha256 和错误行列；语法通过不证明功能正确，不检查其他语言或项目依赖。', {'path': FILE}, ['path']),
     schema('code_execute', '编程助手：经用户确认，在真实电脑的授权工作目录运行代码任务命令，如测试、构建或 Git 状态检查。argv 数组按字面传入，shell=False，不自动展开管道或变量。没有沙箱；进程继承环境权限，可访问目录外文件和网络。预览展示完整参数与风险。超时或取消终止进程组；输出合并 stdout/stderr 并限长，非零退出返回 error。本地模式禁用。不得绕过文件权限或用户拒绝，不自行提交、推送、发布或启动长期服务。', {
         'argv': field('array', '可执行程序及其参数，如 ["python3", "-m", "unittest"]; 不填 shell 拼接字符串。', items={'type': 'string'}, minItems=1, maxItems=100),
@@ -162,11 +167,12 @@ def validate_arguments(name, args):
         if kind == 'array':
             if not field.get('minItems', 0) <= len(value) <= field.get('maxItems', 100): raise ValueError(key + ' 数量超出限制。')
             if any(not isinstance(v, str) or '\x00' in v or len(v) > 20000 for v in value): raise ValueError(key + ' 必须是有效字符串参数数组。')
-            if not value[0].strip(): raise ValueError('可执行程序不能为空。')
+            if name == 'code_execute' and key == 'argv' and not value[0].strip(): raise ValueError('可执行程序不能为空。')
+            if name == 'delivery_evaluate' and key == 'paths' and any(not p.strip() for p in value): raise ValueError('文件路径不能为空。')
         if 'enum' in field and value not in field['enum']: raise ValueError(key + ' 必须是：' + ', '.join(field['enum']))
         if kind == 'integer' and not field.get('minimum', value) <= value <= field.get('maximum', value): raise ValueError(key + ' 超出允许范围。')
         if kind == 'string':
-            empty_allowed = key in ('text', 'new_text') or (name == 'file_list' and key == 'query')
+            empty_allowed = key in ('text', 'new_text') or (name == 'file_list' and key == 'query') or (name == 'delivery_evaluate' and key == 'evidence')
             if not empty_allowed and not (value if key == 'old_text' else value.strip()): raise ValueError(key + ' 不能为空。')
             if len(value) > field.get('maxLength', 1000000 if key == 'text' else 20000): raise ValueError(key + ' 超出长度限制。')
             if len(value) < field.get('minLength', 0): raise ValueError(key + ' 内容过短。')
@@ -603,8 +609,9 @@ class Capabilities(FileTools, CodingTools):
                 'agent_architecture': {'independent_contexts': True, 'bridge': 'main', 'parallel': False,
                                        'protocol_version': 1, 'strategies': AGENT_STRATEGIES},
                 'delivery_evaluation': {'framework': 'deepeval', 'required_version': '4.2.8',
+                                        'trigger': 'user_only',
                                         'environment': '共用项目 Python 3.12+，独立子进程；依赖及模型可用性在实际评测时验证',
-                                        'metrics': ['任务完成度', '证据一致性', '交付质量'],
+                                        'metrics': ['要求符合度', '证据一致性', '结果适用性'],
                                         'uploads_enabled': False},
                 'document_parsers': dependencies, 'ocr_installed': bool(shutil.which('tesseract')),
                 'macos': sys.platform == 'darwin', 'network_enabled': not self.local,

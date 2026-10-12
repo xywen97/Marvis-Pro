@@ -93,11 +93,10 @@ context_management:
   #     window_tokens: 512000
   #     auto_compact_window_tokens: 400000  # 提前触发
 
-# 交付质量门禁：默认开启，不可用/不通过不作为合格成果交付。
+# 用户主动评测功能：普通任务不自动评测；仅显式提交评测对象与要求时运行。
 evaluation:
   enabled: true
   threshold: 0.8
-  max_repairs: 2
   timeout: 120
   # python: /absolute/path/to/python3.12-with-deepeval
   # 默认使用主引擎的当前 Python 解释器，与项目 .venv 保持一致。

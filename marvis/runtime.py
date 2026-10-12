@@ -11,7 +11,7 @@ from llm_client import LLMClient
 from marvis.store import Store, uid
 from marvis.capabilities import Capabilities, TOOLS, MUTATIONS, validate_arguments
 from marvis.team import AGENTS, TOOL_AGENTS, tool_message
-from marvis.evaluation import enabled as evaluation_enabled
+from marvis.evaluation import EVALUATION_INTAKE, is_evaluation_wakeup
 from marvis.context_manager import ContextManager, ContextPolicy, estimate_tokens
 
 
@@ -324,6 +324,12 @@ class Runtime:
     def submit(self, prompt, session_id=None, action=None):
         prompt = str(prompt).strip()
         if not prompt or len(prompt) > 20000: raise ValueError('请输入 1–20000 字符的任务。')
+        if action and action.get('tool') == 'delivery_evaluate':
+            validate_arguments('delivery_evaluate', action.get('arguments', {}))
+            if not action['arguments']['candidate'].strip() or not action['arguments']['requirements'].strip():
+                raise ValueError('请先提供评测对象和评测要求。')
+            # Freeze explicit user input before background execution; model calls cannot create this event.
+            action = json.loads(json.dumps(action, ensure_ascii=False))
         with self.lock:
             if self.closed.is_set(): raise ValueError('服务已经关闭。')
             if self.store.one("SELECT count(*) AS n FROM tasks WHERE status IN ('queued','running','waiting_approval')")['n'] >= 20:
@@ -338,6 +344,8 @@ class Runtime:
             self.store.add_message(session_id, 'user', prompt, ident)
             self.cancels[ident] = threading.Event()
             self.store.event(ident, 'queued', {'text': '任务已加入队列'})
+            if action and action.get('tool') == 'delivery_evaluate':
+                self.store.event(ident, 'user_evaluation_request', {'user_initiated': True, 'request': action['arguments']})
             self.pool.submit(self._run, ident, session_id, prompt, action, self.settings())
         return {'id': ident, 'session_id': session_id, 'status': 'queued'}
 
@@ -447,28 +455,30 @@ class Runtime:
             # Explicit tools and offline shortcuts stay deterministic. Online
             # natural-language tasks go through the independent main/worker loop.
             direct = action or (self.direct(prompt, settings['roots']) if self.offline or prompt.startswith('/tool ') else None)
-            if direct:
+            evaluation_status = None
+            if not direct and is_evaluation_wakeup(prompt):
+                reply = EVALUATION_INTAKE
+                self.store.event(ident, 'evaluation_intake', {'agent': 'evaluation', 'text': reply})
+            elif direct:
                 if direct['tool'] == 'delivery_evaluate':
                     from marvis.coordinator import Coordinator
                     validate_arguments('delivery_evaluate', direct.get('arguments', {}))
                     coordinator = Coordinator(self, ident, session_id, caps, settings)
-                    review = coordinator.dispatch({
-                        'agent': 'evaluation', 'objective': prompt, 'context': direct['arguments']['candidate']})
-                    if review['status'] != 'completed': raise ValueError(review['summary'])
-                    reply = review['summary']
+                    # /tool is also explicit user input, not a model-originated dispatch.
+                    if not any(e['kind'] == 'user_evaluation_request' for e in self.store.events(ident)):
+                        self.store.event(ident, 'user_evaluation_request', {'user_initiated': True, 'request': direct['arguments']})
+                    review = coordinator.dispatch({'agent': 'evaluation', 'objective': '用户主动评测', 'context': ''})
+                    reply = coordinator.summarize_user_evaluation(review)
+                    evaluation_status = 'completed' if review['status'] == 'completed' else 'failed'
                 else:
                     result = self._tool(ident, caps, direct['tool'], direct.get('arguments', {}))
                     reply = self.format_result(result)
-                    if direct['tool'] in ('file_write', 'file_edit', 'document_convert', 'code_execute') and not result.get('rejected'):
-                        from marvis.coordinator import Coordinator
-                        coordinator = Coordinator(self, ident, session_id, caps, settings)
-                        rejected = coordinator.gate_candidate(reply)
-                        if rejected: coordinator.blocked(rejected)
             else:
                 reply = self._chat(ident, session_id, prompt, caps, settings)
             self._check(ident)
             self.store.add_message(session_id, 'assistant', reply, ident)
-            self.status(ident, 'completed', reply); self.store.event(ident, 'completed', {'text': '任务完成'})
+            status = evaluation_status or 'completed'
+            self.status(ident, status, reply); self.store.event(ident, status, {'text': '评测不可用' if status == 'failed' else '任务完成'})
         except Cancelled as e:
             self._preserve_partial_reply(ident)
             self.status(ident, 'cancelled', str(e)); self.store.add_message(session_id, 'assistant', str(e), ident)
@@ -542,8 +552,8 @@ class Runtime:
         self.context_manager.prepare(ident, client, messages, selected_tools, agent, request_id, deadline)
         self.store.event(ident, 'model_start', {'text': '正在生成处理方案与回复', 'step': step, 'model': client.model, 'agent': agent, 'request_id': request_id})
         parts = []; event_id = None; last_flush = 0.0; last_usage = 0.0
-        # Drafts must not appear as a finished answer before the gate accepts them.
-        hold_candidate = agent == 'main' and (evaluation_enabled(self) or status_summary)
+        # Status/evaluation summaries publish atomically; ordinary answers stream normally.
+        hold_candidate = agent == 'main' and status_summary
         tool_events = {}; tool_parts = {}
         def check_turn():
             self._check(ident)
@@ -612,9 +622,6 @@ class Runtime:
             self.store.execute("UPDATE events SET kind='assistant_note' WHERE id=?", (event_id,))
             self.store.record_event_entry(ident,event_id,'assistant_note',{'text':result.content,'step':step})
             self.status(ident, 'running')
-        if hold_candidate and not status_summary and result.ok and result.content:
-            kind = 'assistant_note' if result.tool_calls else 'delivery_candidate'
-            self.store.event(ident, kind, {'text': result.content, 'step': step, 'agent': 'main', 'provisional': True})
         if result.ok:
             output = {'role': 'assistant', 'content': result.content}
             if result.tool_calls: output['tool_calls'] = result.tool_calls

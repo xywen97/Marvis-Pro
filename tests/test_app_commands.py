@@ -29,6 +29,13 @@ class AppCommandsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'未知命令'): execute(self.runtime,'/unknown',self.sid)
         with self.assertRaisesRegex(ValueError,'confirm'): execute(self.runtime,'/del '+self.sid,self.sid)
 
+    def test_evaluation_aliases_open_intake_without_model_task(self):
+        for command in ('/evaluate', '/eval', '/评测'):
+            self.assertEqual(execute(self.runtime, command, self.sid)['view'], 'evaluation')
+        self.assertEqual(self.runtime.snapshot()['tasks'], [])
+        entry = next(c for c in catalog() if c['name'] == '/evaluate')
+        self.assertIn('/eval', entry['aliases']); self.assertIn('/评测', entry['aliases'])
+
     def test_fork_copies_only_ancestry_and_leaves_source_unchanged(self):
         first = self.turn('起点'); self.turn('不要带入新分支的后续消息')
         before = self.runtime.session_tree(self.sid)

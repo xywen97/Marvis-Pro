@@ -48,7 +48,7 @@ async function run(){
   assert.notEqual(first,second,'working avatar must animate');
   assert(await saved.evaluate(node=>node===document.querySelector('.agent-main')),'avatar must retain its DOM and animation');
   await page.locator('.agent-computer').click();assert.equal(await page.locator('#office-agent-name').textContent(),'电脑管家');
-  await page.screenshot({path:path.join(__dirname,'../docs/screenshots/office.png')});
+  await page.screenshot({path:process.env.MARVIS_OFFICE_SCREENSHOT_PATH||path.join(__dirname,'../docs/screenshots/office.png')});
   await page.waitForSelector('.office-flow[data-agent=computer][data-direction=return]');
   const directions=await page.evaluate(()=>{
    const outbound=document.querySelector('.flow-dispatch .flow-track'),inbound=document.querySelector('.flow-return .flow-track');
