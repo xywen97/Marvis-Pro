@@ -1,35 +1,102 @@
 'use strict';
 window.MarvisOffice = (() => {
  const names={main:'MarvisXY',computer:'电脑管家',file:'文件管家',app:'软件管家',browser:'浏览器管家',search:'搜索助手',coding:'编程助手',evaluation:'评测助手',context:'上下文管理助手'};
- const labels={idle:'待命',thinking:'思考与规划',working:'执行工具',waiting:'等待你确认',done:'任务完成',error:'任务异常',stopped:'任务已停止'};
- const drawing=`<svg viewBox="0 0 240 220" aria-hidden="true">
-  <ellipse cx="124" cy="187" rx="90" ry="14" class="desk-shadow"/>
-  <path d="M40 110v61l9 5v-59M196 110v61l-9 5v-59" class="desk-leg"/>
-  <path d="M26 105l145-16 44 24-147 18z" class="desk-top"/>
-  <path d="M26 105v9l42 25 147-17v-9L68 131z" class="desk-edge"/>
-  <path d="M112 88v13l-15 3 37 5 15-5-25-5V87" class="monitor-foot"/>
-  <rect x="80" y="35" width="90" height="61" rx="5" class="monitor"/>
-  <rect x="86" y="41" width="78" height="48" rx="2" class="monitor-screen"/>
-  <g class="screen-lines"><path d="M95 52h40M95 61h56M95 70h32M95 79h44"/></g>
-  <circle cx="155" cy="51" r="3" class="screen-light"/>
-  <path d="M49 94v12c0 6 14 6 14 0V94z" class="coffee"/><ellipse cx="56" cy="94" rx="7" ry="3" class="coffee-top"/>
-  <path d="M64 96c10-1 10 10 0 8" fill="none" class="coffee-handle"/>
-  <g class="coffee-steam"><path d="M52 86c-5-4 5-6 0-10M59 87c-5-4 5-6 0-10"/></g>
-  <path d="M82 182h68l-8-35H91z" class="chair-base"/>
-  <path d="M116 177v22m0-4-27 9m27-9 28 9" class="chair-legs"/>
-  <g class="mascot">
-   <path d="M104 144l-7 27h19l6-21 7 21h18l-9-32z" class="mascot-body"/>
-   <path d="M103 98c-12 9-13 30-8 47 8 17 39 17 48 0 6-15 3-38-9-46z" class="mascot-body"/>
-   <path d="M95 104c-12-7-15-26-5-40l-2-16 16 8c12-6 23-6 34 0l15-8-2 17c12 16 5 33-5 40z" class="mascot-head"/>
-   <path d="M95 103c15 5 34 5 50-1l2 12c-18 7-40 7-55 0z" class="scarf"/>
-   <path d="M139 111l2 24 11-2-4-25" class="scarf-tail scarf"/>
-   <path d="M98 124l-20-14m58 14 15-13" class="mascot-arms"/>
-   <path d="M109 71h18" class="mascot-mark"/>
+ const labels={idle:'待命',thinking:'分析任务',working:'执行工具',waiting:'等待你确认',done:'任务完成',error:'任务异常',stopped:'任务已停止'};
+ // A circle viewed from above projects to an ellipse. Seats share this projection.
+ const table=`<svg class="office-table" viewBox="0 0 900 720" aria-hidden="true">
+  <defs>
+   <linearGradient id="office-table-surface" x2="0" y2="1"><stop stop-color="#fafcff"/><stop offset="1" stop-color="#dce6f3"/></linearGradient>
+   <linearGradient id="office-table-rim" x2="0" y2="1"><stop stop-color="#c3d1e3"/><stop offset="1" stop-color="#9eafc7"/></linearGradient>
+   <radialGradient id="office-command-glow"><stop stop-color="#7c9eff" stop-opacity=".25"/><stop offset="1" stop-color="#7c9eff" stop-opacity="0"/></radialGradient>
+  </defs>
+  <ellipse cx="450" cy="438" rx="342" ry="227" fill="#bcc9dc" opacity=".12"/>
+  <ellipse cx="450" cy="398" rx="323" ry="211" fill="#e5ebf4"/>
+  <ellipse cx="450" cy="399" rx="307" ry="199" fill="none" stroke="#d4dfed"/>
+  <path d="M390 382v133q60 32 120 0V382" fill="#c3d0e2"/>
+  <ellipse cx="450" cy="513" rx="60" ry="19" fill="#b3c2d7"/>
+  <path d="M160 340v23a290 190 0 0 0 580 0v-23" fill="url(#office-table-rim)"/>
+  <ellipse cx="450" cy="340" rx="290" ry="190" fill="url(#office-table-surface)" stroke="#bacbe0" stroke-width="2"/>
+  <ellipse cx="450" cy="340" rx="276" ry="179" fill="none" stroke="#fff" stroke-width="2" opacity=".8"/>
+  <ellipse cx="450" cy="340" rx="200" ry="130" fill="none" stroke="#c2d1e5" stroke-dasharray="3 9"/>
+  <ellipse cx="450" cy="340" rx="134" ry="88" fill="url(#office-command-glow)"/>
+  <ellipse cx="450" cy="354" rx="78" ry="47" fill="#e9efff" stroke="#a6bbef"/>
+  <ellipse cx="450" cy="354" rx="67" ry="39" fill="none" stroke="#bdccf1"/>
+  <g fill="#c2d0e4" stroke="#f7faff" stroke-width="2">
+   <path d="M423 189h54l-4 14h-46z"/><path d="m624 225 35 22-13 10-33-21z"/>
+   <path d="m682 320 14 32-17 4-12-32z"/><path d="m627 428 32-21 12 11-35 23z"/>
+   <path d="M423 477h54l-4 14h-46z"/><path d="m228 418 12-11 33 21-10 13z"/>
+   <path d="m203 352 14-32 16 4-12 32z"/><path d="m242 247 35-22 13 11-34 21z"/>
   </g>
-  <rect x="91" y="144" width="58" height="40" rx="12" class="chair-back"/>
-  <g class="work-spark"><path d="M179 42v10m-5-5h10M69 61v8m-4-4h8"/></g>
  </svg>`;
+ function drawing(front=false,main=false){return `<svg viewBox="0 0 160 180" aria-hidden="true">
+  <ellipse cx="80" cy="154" rx="48" ry="13" class="desk-shadow"/>
+  ${main?'':`<path d="M77 139v25m0-4-25 10m25-10 27 10" class="chair-legs"/>
+  <rect x="47" y="77" width="66" height="59" rx="18" class="chair-back"/>
+  <ellipse cx="80" cy="135" rx="34" ry="14" class="chair-base"/>`}
+  <g class="mascot">
+   <path d="M61 110l-6 29h19l6-22 6 22h19l-6-29z" class="mascot-body"/>
+   <path d="M62 77c-13 13-13 35-5 45 11 12 35 12 46 0 8-13 6-35-6-45z" class="mascot-body"/>
+   <path d="M48 73c-7-12-6-27 1-37l-2-19 19 9c9-3 20-3 29 0l18-9-2 19c8 13 9 28 1 40-13 16-51 15-64-3z" class="mascot-head"/>
+   <path d="M51 81q29 12 58-1l1 12q-30 14-61 0z" class="scarf"/>
+   <path d="m101 91 3 24 12-3-7-23" class="scarf-tail scarf"/>
+   <path d="m60 103-18-12m58 12 18-12" class="mascot-arms"/>
+   ${front?`<g class="mascot-face"><ellipse cx="64" cy="56" rx="3" ry="4"/><ellipse cx="96" cy="56" rx="3" ry="4"/><path d="m76 66 4 3 4-3m-4 3v4"/></g>`:'<path d="M69 46h22" class="mascot-mark"/>'}
+  </g>
+  ${main?'<ellipse cx="80" cy="144" rx="40" ry="8" class="command-light"/>':front?'':'<rect x="48" y="116" width="64" height="34" rx="12" class="chair-back"/>'}
+  <g class="work-spark"><path d="M128 39v12m-6-6h12M29 65v8m-4-4h8"/></g>
+ </svg>`;}
  let initialized=false, selected='main';
+ const seats=new Map(), eventCursors=new Map();
+ const svgNS='http://www.w3.org/2000/svg';
+ function statusText(item){
+  if(item.mode==='working'&&item.tool==='agent_dispatch')return '分派任务';
+  if(item.mode==='thinking')return item.stage==='coordinating'?'统筹任务':item.stage==='reviewing'?'整理结果':item.stage==='context'?'整理上下文':labels.thinking;
+  return labels[item.mode];
+ }
+ function svgNode(tag,attrs={}){
+  const node=document.createElementNS(svgNS,tag);
+  for(const [key,value] of Object.entries(attrs))node.setAttribute(key,value);
+  return node;
+ }
+ function showFlow(agent,direction){
+  const seat=seats.get(agent),main=seats.get('main');
+  if(!seat||!main||agent==='main')return;
+  const returning=direction==='return',from=returning?seat:main,to=returning?main:seat;
+  const dx=to.x-from.x,dy=to.y-from.y,length=Math.hypot(dx,dy),ux=dx/length,uy=dy/length;
+  const start={x:from.x+ux*65,y:from.y+uy*65},end={x:to.x-ux*65,y:to.y-uy*65};
+  const mid={x:(start.x+end.x)/2-uy*28,y:(start.y+end.y)/2+ux*28};
+  const route=`M ${start.x} ${start.y} Q ${mid.x} ${mid.y} ${end.x} ${end.y}`;
+  const layer=$('#office-data-flows');
+  // Keep bursts legible and bound transient DOM even under many rapid handoffs.
+  while(layer.children.length>=8)layer.firstElementChild.remove();
+  const group=svgNode('g',{'class':'office-flow flow-'+direction,'data-agent':agent,'data-direction':direction});
+  group.append(svgNode('path',{d:route,'class':'flow-track'}),svgNode('path',{d:route,'class':'flow-stream'}));
+  for(let i=0;i<3;i++){
+   const dot=svgNode('circle',{r:i===0?4:2.5,'class':'flow-packet'});
+   dot.style.offsetPath=`path("${route}")`;dot.style.animationDelay=(-i*.35)+'s';group.append(dot);
+  }
+  group.append(svgNode('circle',{cx:end.x,cy:end.y,r:8,'class':'flow-arrival'}));
+  const badge=svgNode('g',{'class':'flow-badge',transform:`translate(${mid.x} ${mid.y})`});
+  badge.append(svgNode('rect',{x:-49,y:-12,width:98,height:24,rx:12}));
+  const label=svgNode('text',{'text-anchor':'middle',y:4});label.textContent=returning?'结果回传 →':'任务分派 →';badge.append(label);group.append(badge);
+  layer.append(group);
+  $('#office-flow-announcement').textContent=returning?`${names[agent]}已向主控返回任务结果`:`主控已向${names[agent]}分派任务`;
+  setTimeout(()=>group.remove(),4600);
+ }
+ function renderFlows(snapshot){
+  for(const task of snapshot.tasks){
+   const last=eventCursors.get(task.id),events=task.events||[];
+   for(const event of events){
+    // First view shows only fresh transfers, never replays an old task history.
+    if(last===undefined?Date.now()/1000-event.created>5:event.id<=last)continue;
+    if(event.kind==='agent_start')showFlow(event.content.agent,'dispatch');
+    else if(event.kind==='agent_result')showFlow(event.content.agent,'return');
+   }
+   if(events.length)eventCursors.set(task.id,events[events.length-1].id);
+  }
+  for(const id of eventCursors.keys())if(!snapshot.tasks.some(task=>task.id===id))eventCursors.delete(id);
+ }
+
  function role(tool='') {
   if(tool==='delivery_evaluate')return 'evaluation';if(tool.startsWith('code_'))return 'coding';
   if(tool==='knowledge_search'||tool==='web_search')return 'search';
@@ -40,16 +107,16 @@ window.MarvisOffice = (() => {
   const modes=Object.fromEntries(snapshot.agents.map(a=>[a.id,{mode:'idle',task:null,tool:''}]));
   const task=snapshot.tasks.find(t=>['running','waiting_approval'].includes(t.status));
   if(task){
-   let agent='main', tool='', phase='thinking';
+   let agent='main', tool='', phase='thinking',stage='analyzing';
    for(const event of task.events){
-    if(['context_compaction_start','context_model_start'].includes(event.kind)){agent='context';tool='';phase='thinking';}
-    else if(event.kind==='context_compaction'){agent=event.content.agent||'main';tool='';phase='thinking';}
-    else if(event.kind==='tool_start'){agent=event.content.agent||role(event.content.tool);tool=event.content.tool;phase='working';}
-    else if(['model_start','agent_start','tool_result','tool_error','rejected'].includes(event.kind)){agent=event.content.agent||'main';tool='';phase='thinking';}
-    else if(event.kind==='agent_result'){agent='main';tool='';phase='thinking';}
+    if(['context_compaction_start','context_model_start'].includes(event.kind)){agent='context';tool='';phase='thinking';stage='context';}
+    else if(event.kind==='context_compaction'){agent=event.content.agent||'main';tool='';phase='thinking';stage='analyzing';}
+    else if(event.kind==='tool_start'){agent=event.content.agent||role(event.content.tool);tool=event.content.tool;phase='working';stage='';}
+    else if(['model_start','agent_start','tool_result','tool_error','rejected'].includes(event.kind)){agent=event.content.agent||'main';tool='';phase='thinking';stage=['tool_result','tool_error','rejected'].includes(event.kind)?'reviewing':'analyzing';}
+    else if(event.kind==='agent_result'){agent='main';tool='';phase='thinking';stage='reviewing';}
    }
-   modes.main={mode:task.status==='waiting_approval'?'waiting':'thinking',task,tool:''};
-   if(agent!=='main'&&modes[agent])modes[agent]={mode:task.status==='waiting_approval'?'waiting':phase,task,tool};
+   modes.main={mode:task.status==='waiting_approval'?'waiting':agent==='main'?phase:'thinking',task,tool:agent==='main'?tool:'',stage:agent==='main'?stage:'coordinating'};
+   if(agent!=='main'&&modes[agent])modes[agent]={mode:task.status==='waiting_approval'?'waiting':phase,task,tool,stage};
   }else{
    const recent=snapshot.tasks.find(t=>['completed','failed','cancelled'].includes(t.status)&&Date.now()/1000-t.updated<5);
    if(recent)modes.main={mode:recent.status==='completed'?'done':recent.status==='cancelled'?'stopped':'error',task:recent,tool:''};
@@ -59,22 +126,35 @@ window.MarvisOffice = (() => {
  function init(snapshot) {
   if(initialized)return;initialized=true;
   const room=$('#office-stations');
+  room.innerHTML=table;
+  const flows=svgNode('svg',{id:'office-data-flows','class':'office-data-flows',viewBox:'0 0 900 720','aria-hidden':'true'});room.append(flows);
+  const announcement=el('span','office-flow-announcement');announcement.id='office-flow-announcement';announcement.setAttribute('role','status');room.append(announcement);
+  const assistants=snapshot.agents.filter(agent=>agent.id!=='main');
   for(const agent of snapshot.agents){
    const station=el('button','office-station agent-'+agent.id);station.type='button';station.dataset.agent=agent.id;
-   const art=el('div','station-art');art.innerHTML=drawing;
-   station.append(el('span','station-label',names[agent.id]||agent.name),art,el('span','station-status','待命'));
+   const index=assistants.indexOf(agent),angle=-Math.PI/2+index*Math.PI*2/assistants.length;
+   const isMain=agent.id==='main';
+   const x=isMain?450:450+335*Math.cos(angle),y=isMain?335:350+245*Math.sin(angle);
+   seats.set(agent.id,{x,y});
+   station.style.left=(x/900*100)+'%';station.style.top=(y/720*100)+'%';
+   station.style.zIndex=isMain?'3':'4';
+   station.classList.toggle('command-station',isMain);
+   const art=el('div','station-art');art.innerHTML=drawing(isMain||y<280,isMain);
+   station.append(art,el('span','station-label',names[agent.id]||agent.name),el('span','station-status','待命'));
+   if(isMain)station.append(el('span','command-caption','主控'));
    station.onclick=()=>{selected=agent.id;render(state);};room.append(station);
   }
  }
  function render(snapshot) {
   if(!snapshot)return;init(snapshot);
-  const modes=activity(snapshot);
+  const modes=activity(snapshot);renderFlows(snapshot);
   for(const station of document.querySelectorAll('.office-station')){
    const item=modes[station.dataset.agent];
    if(station.dataset.mode!==item.mode)station.dataset.mode=item.mode;
    station.classList.toggle('selected',station.dataset.agent===selected);
-   station.querySelector('.station-status').textContent=labels[item.mode]+(item.tool?' · '+item.tool:'');
-   station.setAttribute('aria-label',(names[station.dataset.agent]||'管家')+' · '+labels[item.mode]);
+   station.setAttribute('aria-pressed',String(station.dataset.agent===selected));
+   station.querySelector('.station-status').textContent=statusText(item)+(item.tool?' · '+item.tool:'');
+   station.setAttribute('aria-label',(names[station.dataset.agent]||'管家')+' · '+statusText(item));
   }
   const active=snapshot.tasks.filter(t=>['queued','running','waiting_approval'].includes(t.status));
   const today=new Date();today.setHours(0,0,0,0);
@@ -85,7 +165,7 @@ window.MarvisOffice = (() => {
   $('#office-room-state').textContent=active.length?'团队正在处理 '+active.length+' 个任务':'团队已就绪，等待你的下一个目标';
   const agent=snapshot.agents.find(a=>a.id===selected),item=modes[selected];
   $('#office-agent-name').textContent=names[selected];$('#office-agent-role').textContent=agent.role;
-  $('#office-agent-state').textContent=labels[item.mode];
+  $('#office-agent-state').textContent=statusText(item);
   $('#office-agent-work').textContent=item.task?item.task.prompt:(agent.guidance||'没有正在执行的任务。点击工位可以查看各管家的状态。');
   const action=$('#office-agent-open');action.hidden=!item.task;action.onclick=()=>safe(async()=>{session=item.task.session_id;showPage('chat');await renderMessages();});
   const list=$('#office-recent');

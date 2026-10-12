@@ -30,26 +30,69 @@ async function run(){
   await page.waitForFunction(()=>document.querySelector('.agent-main')?.dataset.mode==='thinking');
   await page.waitForFunction(()=>document.querySelector('.agent-computer')?.dataset.mode==='working');
   assert.equal(await page.locator('#office-active-count').textContent(),'1');
+  assert.equal(await page.locator('.agent-main .station-status').textContent(),'统筹任务');
+  await page.waitForSelector('.office-flow[data-agent=computer][data-direction=dispatch]');
+  const dispatch=page.locator('.flow-dispatch[data-agent=computer]').last();
+  const packetStart=await dispatch.locator('.flow-packet').first().evaluate(n=>getComputedStyle(n).offsetDistance);
+  await page.waitForTimeout(100);
+  const packetEnd=await dispatch.locator('.flow-packet').first().evaluate(n=>getComputedStyle(n).offsetDistance);
+  assert.notEqual(packetStart,packetEnd,'dispatch packets must travel along the route');
+  const stableFlows=await page.evaluate(()=>{
+   const layer=document.querySelector('#office-data-flows'),before=layer.children.length;
+   MarvisOffice.render(state);MarvisOffice.render(state);return before===layer.children.length;
+  });assert(stableFlows,'snapshot refreshes must not replay transfers');
   const first=await page.locator('.agent-computer .mascot').evaluate(n=>getComputedStyle(n).transform);
   await page.waitForTimeout(100);const second=await page.locator('.agent-computer .mascot').evaluate(n=>getComputedStyle(n).transform);
   assert.notEqual(first,second,'working avatar must animate');
   assert(await saved.evaluate(node=>node===document.querySelector('.agent-main')),'avatar must retain its DOM and animation');
   await page.locator('.agent-computer').click();assert.equal(await page.locator('#office-agent-name').textContent(),'电脑管家');
   await page.screenshot({path:path.join(__dirname,'../docs/screenshots/office.png')});
+  await page.waitForSelector('.office-flow[data-agent=computer][data-direction=return]');
+  const directions=await page.evaluate(()=>{
+   const outbound=document.querySelector('.flow-dispatch .flow-track'),inbound=document.querySelector('.flow-return .flow-track');
+   return {out:[outbound.getPointAtLength(0).x,outbound.getPointAtLength(outbound.getTotalLength()).x],
+    back:[inbound.getPointAtLength(0).x,inbound.getPointAtLength(inbound.getTotalLength()).x]};
+  });
+  assert(directions.out[0]<directions.out[1]&&directions.back[0]>directions.back[1],'result flow must reverse the dispatch direction');
   await page.waitForFunction(()=>document.querySelector('#office-done-count').textContent==='1');
+  const stages=await page.evaluate(()=>{
+   const snapshot=JSON.parse(JSON.stringify(state));snapshot.tasks[0].status='running';
+   snapshot.tasks[0].events=[{kind:'model_start',content:{agent:'app'}}];
+   const analyzing=MarvisOffice.activity(snapshot);
+   snapshot.tasks[0].events.push({kind:'tool_result',content:{agent:'app',tool:'app_list'}});
+   const reviewing=MarvisOffice.activity(snapshot);
+   snapshot.tasks[0].events.push({kind:'agent_result',content:{agent:'app'}});
+   return {analyzing,reviewing,returned:MarvisOffice.activity(snapshot)};
+  });
+  assert.equal(stages.analyzing.app.stage,'analyzing');assert.equal(stages.analyzing.main.stage,'coordinating');
+  assert.equal(stages.reviewing.app.stage,'reviewing');assert.equal(stages.returned.app.mode,'idle');
+  assert.equal(stages.returned.main.stage,'reviewing');
   assert.equal(await page.locator('#office-tool-count').textContent(),'3');
   const waiting=await page.evaluate(()=>{
    const snapshot=JSON.parse(JSON.stringify(state));snapshot.tasks[0].status='waiting_approval';
    snapshot.tasks[0].events.push({kind:'tool_start',content:{agent:'file',tool:'file_write'}});
    return MarvisOffice.activity(snapshot);
   });assert.equal(waiting.file.mode,'waiting');assert.equal(waiting.main.mode,'waiting');
+  const historical=await page.evaluate(()=>{
+   const snapshot=JSON.parse(JSON.stringify(state));const task=snapshot.tasks[0];task.id='old-transfer-qa';
+   task.events=[{id:999,kind:'agent_result',created:Date.now()/1000-60,content:{agent:'app'}}];
+   MarvisOffice.render(snapshot);const replayed=!!document.querySelector('.office-flow[data-agent=app]');
+   MarvisOffice.render(state);return replayed;
+  });assert.equal(historical,false,'opening an old task must not replay historical transfers');
   await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   await page.emulateMedia({reducedMotion:'reduce'});
+  const reducedFlow=await page.evaluate(()=>{
+   const snapshot=JSON.parse(JSON.stringify(state));const task=snapshot.tasks[0];task.id='reduced-flow-qa';
+   task.events=[{id:1000,kind:'agent_start',created:Date.now()/1000,content:{agent:'app'}}];
+   MarvisOffice.render(snapshot);const flow=document.querySelector('.flow-dispatch[data-agent=app]');
+   const result={animation:getComputedStyle(flow).animationName,packet:getComputedStyle(flow.querySelector('.flow-packet')).display};
+   MarvisOffice.render(state);return result;
+  });assert.deepEqual(reducedFlow,{animation:'none',packet:'none'});
   assert.equal(await page.locator('.agent-main .mascot').evaluate(n=>getComputedStyle(n).animationName),'none');
   await page.emulateMedia({reducedMotion:'no-preference'});await page.locator('[data-page=chat]').click();
   assert.equal(await page.locator('.agent-main .mascot').evaluate(n=>getComputedStyle(n).animationPlayState),'paused');
   assert.deepEqual(errors,[]);
-  console.log('Office UI passed: nine stable avatars, context handback, real thinking/tool/completion states, animated transforms, nested task links, counters, narrow layout, reduced motion and background pause.');
+  console.log('Office UI passed: nine stable avatars, context handback, real thinking/tool/completion states, animated transforms, nested task links, counters, distinct analysis/review/coordination states, dispatch and return packet directions without replay, narrow layout, reduced motion and background pause.');
  }finally{if(browser)await browser.close();fixture.stdin.end();}
 }
 run().catch(error=>{console.error(error);process.exitCode=1});
