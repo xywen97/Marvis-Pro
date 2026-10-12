@@ -5,7 +5,7 @@
 .office-stations{position:relative;width:100%;aspect-ratio:900/720;isolation:isolate}
 .office-table{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
 .office-station{position:absolute;transform:translate(-50%,-50%);width:16%;border:0;background:transparent;border-radius:16px;padding:0;min-width:0;transition:background .25s;display:flex;flex-direction:column;align-items:center;line-height:1.3}
-.office-station:hover{background:#ffffff80}.office-station.selected{background:transparent}
+.office-station:hover,.office-station.selected{background:transparent}
 .office-station:focus-visible{outline:2px solid #7b9bf3;outline-offset:4px}
 .station-label{font-size:clamp(9px,1vw,12px);font-weight:600;color:#62738d;position:relative;z-index:1;white-space:nowrap;padding:3px 7px;border:1px solid transparent;border-radius:7px;transition:background .25s,border-color .25s}
 .office-station.selected .station-label{background:#fff;border-color:#b8cbf6;color:#4e73c7;box-shadow:0 3px 12px #577dca12}
