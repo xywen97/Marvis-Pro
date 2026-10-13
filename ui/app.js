@@ -5,6 +5,7 @@ if (token) sessionStorage.setItem('marvis-token', token);
 history.replaceState(null, '', location.pathname);
 let state = null, session = null, page = 'chat', approvalId = null, pathAction = null, refreshing = false;
 let liveConnected = false, liveAbort = null, stateUpdates = Promise.resolve(), messageVersion = 0;
+let stateRevision = -1;
 const signatures = {};
 const statuses = {queued:'排队中',running:'执行中',waiting_approval:'等待确认',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断'};
 const busy = t => ['queued','running','waiting_approval'].includes(t.status);
@@ -34,6 +35,10 @@ function showPage(next) { page=next;document.body.classList.toggle('office-view'
 function changed(name, value) { const sig=JSON.stringify(value); if(Object.prototype.hasOwnProperty.call(signatures,name)&&signatures[name]===sig)return false; signatures[name]=sig;return true; }
 function acceptState(value) {
  stateUpdates=stateUpdates.catch(()=>{}).then(async()=>{
+  if(Number.isFinite(value.state_revision)){
+   if(value.state_revision<stateRevision)return;
+   stateRevision=value.state_revision;
+  }
   state=withoutDeletedSessions(value);
   if(session&&!allSessions().some(s=>s.id===session)){session=state.sessions[0]?.id||null;$('#prompt').value='';await renderMessages();}
   $('#connection').textContent='● 已连接';$('#connection').style.color='';renderState();MarvisNotifications.update(state);
@@ -186,8 +191,13 @@ $('#chat-form').onsubmit=e=>{e.preventDefault();const p=$('#prompt').value.trim(
 });};
 $('#prompt').onkeydown=e=>{if(commandMenuKey(e))return;if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('#chat-form').requestSubmit();}};
 $('#new-chat').onclick=()=>safe(async()=>{
- if(!newSessionPending)newSessionPending=api('sessions',{session_id:session}).finally(()=>{newSessionPending=null;});
- const s=await newSessionPending;showArchived=false;session=s.id;showPage('chat');await renderMessages();await refresh();$('#prompt').focus();
+ if(newSessionPending)return newSessionPending;
+ newSessionPending=(async()=>{
+  const s=await api('sessions',{session_id:session});
+  if(Number.isFinite(s.state_revision))stateRevision=Math.max(stateRevision,s.state_revision);
+  showArchived=false;session=s.id;showPage('chat');await renderMessages();await refresh();$('#prompt').focus();
+ })();
+ try{await newSessionPending;}finally{newSessionPending=null;}
 });
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>safe(()=>submit(b.dataset.prompt)));

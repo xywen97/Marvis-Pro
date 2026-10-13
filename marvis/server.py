@@ -18,6 +18,22 @@ def serve(runtime, port=0, file_picker=None, notification_host='browser'):
         from marvis.file_picker import FilePicker
         file_picker = FilePicker(runtime).choose
     token = secrets.token_urlsafe(32)
+    revision = 0
+    revision_lock = threading.Lock()
+
+    def next_revision():
+        nonlocal revision
+        with revision_lock:
+            revision += 1
+            return revision
+
+    def snapshot():
+        # Reserve before reading: a snapshot begun before a mutation must stay
+        # older even when its HTTP/SSE response reaches the UI afterwards.
+        current_revision = next_revision()
+        return {**runtime.snapshot(), 'notification_host': notification_host,
+                'state_revision': current_revision}
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_): pass
         def response(self, code, value, kind='application/json; charset=utf-8'):
@@ -44,12 +60,13 @@ def serve(runtime, port=0, file_picker=None, notification_host='browser'):
             previous = None; deadline = time.monotonic() + 25
             try:
                 while time.monotonic() < deadline:
-                    snapshot = {**runtime.snapshot(), 'notification_host': notification_host}
-                    payload = json.dumps(snapshot, ensure_ascii=False, separators=(',', ':'))
+                    value = snapshot()
+                    # Revision alone must not cause otherwise idle SSE frames.
+                    payload = json.dumps({k: v for k, v in value.items() if k != 'state_revision'}, ensure_ascii=False, separators=(',', ':'))
                     if payload != previous:
-                        self.wfile.write(('data: ' + payload + '\n\n').encode('utf-8'))
+                        self.wfile.write(('data: ' + json.dumps(value, ensure_ascii=False, separators=(',', ':')) + '\n\n').encode('utf-8'))
                         self.wfile.flush(); previous = payload
-                    time.sleep(.1 if any(t['status'] in ('queued','running','waiting_approval') for t in snapshot['tasks']) else .5)
+                    time.sleep(.1 if any(t['status'] in ('queued','running','waiting_approval') for t in value['tasks']) else .5)
             except (OSError, ValueError, sqlite3.Error): pass  # Client closed or engine stopped.
             finally: self.close_connection = True
         def do_GET(self):
@@ -58,7 +75,7 @@ def serve(runtime, port=0, file_picker=None, notification_host='browser'):
                 if not self.authorized(): return self.response(403, {'error': '访问令牌无效。'})
                 if parsed.path == '/api/live': return self.live()
                 try:
-                    if parsed.path == '/api/state': value = {**runtime.snapshot(), 'notification_host': notification_host}
+                    if parsed.path == '/api/state': value = snapshot()
                     elif parsed.path == '/api/messages': value = runtime.messages(parse_qs(parsed.query).get('session', [''])[0])
                     elif parsed.path == '/api/tree': value = runtime.session_tree(parse_qs(parsed.query).get('session', [''])[0])
                     elif parsed.path == '/api/commands':
@@ -89,7 +106,9 @@ def serve(runtime, port=0, file_picker=None, notification_host='browser'):
                 path = urlparse(self.path).path
                 if path == '/api/pick-files': value = file_picker()
                 elif path == '/api/engine-client': value = runtime.client_lease(data)
-                elif path == '/api/sessions': value = {'id': runtime.new_session(data.get('session_id'))}
+                elif path == '/api/sessions':
+                    value = {'id': runtime.new_session(data.get('session_id')),
+                             'state_revision': next_revision()}
                 elif path == '/api/session-action': value = runtime.session_action(data['session_id'], data['action'])
                 elif path == '/api/tree-navigate': value = runtime.navigate_tree(data['session_id'], data.get('node_id'),data.get('summarize',False),data.get('custom_instructions'))
                 elif path == '/api/tree-label': value = runtime.label_node(data['session_id'], data['node_id'], data.get('label', ''))
