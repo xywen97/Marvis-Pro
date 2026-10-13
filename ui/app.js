@@ -165,7 +165,7 @@ async function renderMessages() {
    for(const item of conversation.items){
     if(item.kind==='reply'){
      const reply=item.message||{role:'assistant',id:item.event.kind==='assistant_note'?'event-'+item.event.id:null,content:item.event.content.text,created:item.event.created};
-     specs.push(messageSpec(item.key,reply,{streaming:item.streaming,note:item.note,displayText:item.event.content.text}));
+     specs.push(messageSpec(item.key,reply,{streaming:item.streaming,note:item.note,displayText:item.message?.content??item.event.content.text}));
     }else specs.push({key:item.key,make:()=>el('div','agent-progress'),update:root=>AgentProgress.updateTrace(root,task,item.groups)});
    }
   }

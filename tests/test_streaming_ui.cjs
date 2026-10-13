@@ -37,6 +37,38 @@ async function run(){
   const finishFrames=await page.evaluate(()=>finishFrames);
   assert(new Set(finishFrames).size>=2,'completion must continue revealing the burst tail instead of flushing it at once');
   assert.equal(await page.locator('.message.assistant').count(),1,'completed reply must not duplicate its streaming bubble');
+  const handoff=await page.evaluate(async()=>{
+   // The messages endpoint can return the saved answer while /api/live still
+   // holds an earlier task snapshot. Force that ordering deterministically.
+   const originalState=state,originalApi=api,originalSession=session;
+   const task=structuredClone(state.tasks[0]);
+   const messages=await api('messages?session='+session);
+   const final=messages.find(message=>message.role==='assistant');
+   const stream=task.events.find(event=>event.kind==='assistant_stream');
+   const originalNode=document.querySelector('.message.assistant');
+   task.status='running';stream.content.text=final.content.slice(0,70);
+   try{
+    api=async()=>messages;state={...state,tasks:[task]};
+    await renderMessages();
+    const row=document.querySelector('.message.assistant');
+    const result={count:document.querySelectorAll('.message.assistant').length,
+     streaming:row.classList.contains('streaming'),sameNode:row===originalNode,
+     target:row.querySelector('.message-text')._target,entryId:row.dataset.entryId,final:final.content,id:final.id};
+    // A complete stream may also differ from the saved answer's formatting.
+    task.status='completed';stream.content.text=final.content+'\n\n附加的流式尾部';
+    await renderMessages();
+    result.rewrittenCount=document.querySelectorAll('.message.assistant').length;
+    result.rewrittenTarget=document.querySelector('.message-text.animated-text')._target;
+    return result;
+   }finally{api=originalApi;state=originalState;session=originalSession;await renderMessages();}
+  });
+  assert.equal(handoff.count,1,'a stale partial snapshot and persisted answer must share one bubble');
+  assert.equal(handoff.streaming,false,'a saved answer must clear the streaming cursor even when task status is stale');
+  assert.equal(handoff.sameNode,true,'final handoff must preserve the original bubble');
+  assert.equal(handoff.target,handoff.final,'saved answer is authoritative');
+  assert.equal(handoff.entryId,handoff.id,'saved answer keeps copy and branch actions');
+  assert.equal(handoff.rewrittenCount,1,'formatting differences must not duplicate the saved answer');
+  assert.equal(handoff.rewrittenTarget,handoff.final);
   assert.deepEqual(errors,[]);
   // Reconnection and the polling fallback must also show unfinished responses.
   await page.route('**/api/live',route=>route.abort());await page.evaluate(()=>liveAbort.abort());

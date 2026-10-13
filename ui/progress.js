@@ -92,15 +92,18 @@ window.AgentProgress = (() => {
   }
  }
  function conversation(task, finalMessage) {
-  const groups=steps(task), latest=groups[groups.length-1]?.step;
-  const lastNote=groups.flatMap(group=>group.notes).at(-1);
-  const finalEvent=finalMessage&&lastNote?.kind==='assistant_stream'&&lastNote.content.text.trim()===finalMessage.content.trim()?lastNote:null;
+  const groups=steps(task), lastGroup=groups.at(-1), latest=lastGroup?.step;
+  const lastNote=lastGroup?.notes.at(-1);
+  // The messages request can be newer than the live task snapshot. Associate
+  // the saved answer with the final model turn, rather than comparing text
+  // with a possibly incomplete stream. Tool-turn notes remain separate.
+  const finalEvent=finalMessage&&!lastGroup?.tools.length&&lastNote?.kind==='assistant_stream'?lastNote:null;
   const items=[];
   for(const group of groups){
    for(const event of group.notes)items.push({kind:'reply',key:`reply-${task.id}-${event.id}`,event,
     message:event===finalEvent?finalMessage:null,
     note:event.kind==='assistant_note'||group.tools.length>0,
-    streaming:busy(task)&&group.step===latest&&event.kind==='assistant_stream'});
+    streaming:event!==finalEvent&&busy(task)&&group.step===latest&&event.kind==='assistant_stream'});
    if(group.tools.length||group.events.length){
     const previous=items.at(-1);
     if(previous?.kind==='trace')previous.groups.push(group);
