@@ -74,7 +74,7 @@ class MemoryEngine:
         self.runtime = runtime
         self.store = runtime.store
         options = dict(runtime.config.get('memory') or {})
-        self.enabled = options.get('enabled', False)
+        self.enabled = self.store.setting('memory_enabled', options.get('enabled', False))
         self.deployment = options.get('deployment', 'external')
         if self.deployment not in ('managed', 'external'): raise ValueError('memory.deployment 无效。')
         if type(self.enabled) is not bool: raise ValueError('memory.enabled 必须是布尔值。')

@@ -53,6 +53,7 @@ class Runtime:
                 'model': {'base_url': saved.get('base_url', base.base_url), 'model': saved.get('model', base.model),
                           'configured': bool((saved.get('base_url', base.base_url)) and saved.get('model', base.model)),
                           'has_key': bool(base.api_key)}, 'offline': self.offline,
+                'memory_enabled': self.store.setting('memory_enabled', (self.config.get('memory') or {}).get('enabled', False)),
                 'data_dir': str(self.store.directory)}
 
     def client_lease(self, data):
@@ -63,6 +64,8 @@ class Runtime:
             return self._update_settings(values)
 
     def _update_settings(self, values):
+        if 'memory_enabled' in values and type(values['memory_enabled']) is not bool:
+            raise ValueError('长期记忆开关必须是布尔值。')
         if self.store.one("SELECT id FROM tasks WHERE status IN ('queued','running','waiting_approval')"):
             raise ValueError('请先等待或取消正在执行的任务，再修改设置。')
         if 'approval_policy' in values:
@@ -97,7 +100,12 @@ class Runtime:
             self.store.set_setting('model', {'base_url': url, 'model': str(model.get('model', '')).strip()})
         if 'approval_policy' in values:
             self.store.set_setting('approval_policy', values['approval_policy'])
-        if 'model' in values or 'mode' in values: self.memory.reconfigure()
+        if 'memory_enabled' in values and values['memory_enabled'] != self.memory.enabled:
+            self.memory.close()
+            self.store.set_setting('memory_enabled', values['memory_enabled'])
+            self.memory = MemoryEngine(self)
+        elif 'model' in values or 'mode' in values:
+            self.memory.reconfigure()
         return self.settings()
 
     def _save_model_key(self, key):

@@ -14,6 +14,13 @@ async function run(){
   await page.goto(data.url);await page.waitForFunction(()=>typeof liveConnected!=='undefined'&&liveConnected);
   await page.locator('[data-page=settings]').click();
   assert.match(await page.locator('#memory-status').textContent(),/停用/);
+  const toggle=page.getByRole('switch',{name:'启用长期记忆'});
+  assert.equal(await toggle.isChecked(),false);
+  await toggle.check();await page.waitForFunction(()=>state.settings.memory_enabled===true&&!document.querySelector('#memory-enabled').disabled);
+  await page.reload();await page.waitForFunction(()=>liveConnected);await page.locator('[data-page=settings]').click();
+  assert.equal(await toggle.isChecked(),true);
+  await toggle.uncheck();await page.waitForFunction(()=>state.settings.memory_enabled===false&&!document.querySelector('#memory-enabled').disabled);
+  assert.match(await page.locator('#memory-status').textContent(),/停用/);
   const key=page.locator('[name=api_key]');assert.equal(await key.getAttribute('type'),'password');
   await page.locator('[name=base_url]').fill('https://model.example/v1');
   await page.locator('[name=model]').fill('chat');await key.fill('ui-private-key');
@@ -24,6 +31,7 @@ async function run(){
   assert(!JSON.stringify(await page.evaluate(()=>state)).includes('ui-private-key'));
   await page.reload();await page.waitForFunction(()=>liveConnected);
   await page.locator('[data-page=settings]').click();assert.equal(await key.inputValue(),'');
+  assert.equal(await toggle.isChecked(),false);
   assert.deepEqual(errors,[]);
   console.log('Memory UI passed: visible lifecycle, masked key input, no key echo, persisted model credentials.');
  }finally{if(browser)await browser.close();fixture.stdin.end();}
