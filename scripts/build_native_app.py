@@ -69,6 +69,7 @@ def sanitized_config():
     config.setdefault('memory', {}).update(enabled=True, deployment='managed')
     config['memory'].pop('url', None)
     config['memory']['managed'] = {'startup_timeout': 90, 'max_restarts': 3}
+    config['skills'] = {'paths': []}
     return yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
 
 
@@ -93,7 +94,11 @@ def build(output, python, model, install=True):
             info = subprocess.check_output([str(python), '-c', 'import sysconfig; print(sysconfig.get_path("purelib"))'], text=True).strip()
             shutil.copytree(info, packages, dirs_exist_ok=True, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'), symlinks=False)
         for name in ('marvis', 'agents', 'skills', 'tools', 'ui'):
-            shutil.copytree(ROOT / name, source / name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
+            shutil.copytree(ROOT / name, source / name, symlinks=name == 'skills', ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
+        if (ROOT / '.agents' / 'skills').is_dir():
+            (source / '.agents').mkdir()
+            shutil.copytree(ROOT / '.agents' / 'skills', source / '.agents' / 'skills', symlinks=True,
+                            ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
         for name in ('main.py', 'agent.py', 'llm_client.py'):
             shutil.copy2(ROOT / name, source / name)
         (source / 'config.yaml').write_text(sanitized_config())

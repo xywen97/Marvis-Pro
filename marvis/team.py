@@ -7,7 +7,7 @@ import json
 
 AGENTS = [
     {'id': 'main', 'name': '主控', 'role': '理解目标 · 编排任务 · 验证结果', 'icon': '✦',
-     'tools': ['agent_inspect'], 'guidance': '能力或依赖不明确时按需检查；分解任务，依据真实结果交接并验证交付；拒绝后停止该动作，失败时调整方法或解释原因。'},
+     'tools': ['agent_inspect', 'skill_list', 'skill_load', 'skill_read'], 'guidance': '能力或依赖不明确时按需检查；分解任务，依据真实结果交接并验证交付；拒绝后停止该动作，失败时调整方法或解释原因。'},
     {'id': 'file', 'name': '文件管家', 'role': '搜索 · 整理 · 文档 · OCR', 'icon': '▤',
      'tools': ['directory_list', 'file_glob', 'file_search', 'file_read_lines', 'file_edit', 'file_list', 'file_read', 'file_write', 'file_organize', 'file_duplicates', 'document_convert', 'knowledge_index', 'image_ocr'],
      'guidance': '目录结构用 directory_list，文件模式用 file_glob，文本定位用 file_search；已知路径直接读，编辑前用 file_read_lines 获取原文和指纹；精确替换需批准，新建文本提供完整内容；区分分页和提取上限，索引交给搜索助手检索。'},

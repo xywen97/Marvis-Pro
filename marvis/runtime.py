@@ -14,6 +14,7 @@ from marvis.team import AGENTS, TOOL_AGENTS, tool_message
 from marvis.evaluation import EVALUATION_INTAKE, is_evaluation_wakeup
 from marvis.context_manager import ContextManager, ContextPolicy, estimate_tokens
 from marvis.memory import MemoryEngine
+from marvis.skill_catalog import SkillCatalog
 
 
 class Cancelled(Exception): pass
@@ -33,6 +34,7 @@ class Runtime:
             raise RuntimeError('此工作空间已有后台引擎运行。请连接现有服务，或使用另一个 --data-dir。')
         self.store = Store(directory)
         self.config = config or {}
+        self.skills = SkillCatalog.for_runtime(self)
         self.context_manager = ContextManager(self)
         self.base_model = LLMClient(**{k: v for k, v in (self.config.get('llm') or {}).items() if k in ('base_url', 'model', 'api_key', 'temperature', 'env_file')})
         self.offline = offline
@@ -365,6 +367,7 @@ class Runtime:
         return {'settings': settings, 'sessions': self.sessions(), 'archived_sessions': self.sessions(True), 'tasks': tasks, 'agents': AGENTS,
                 'context_usage': self.store.context_samples(),
                 'memory': self.memory.status(),
+                'skills': self.skills.list(),
                 'context_policy': {'model': model, 'window_tokens': policy.window_tokens, 'trigger_tokens': policy.trigger},
                 'workflows': self.store.rows('SELECT * FROM workflows ORDER BY next_run'),
                 'knowledge_count': self.store.one('SELECT count(*) AS n FROM documents')['n']}
@@ -503,6 +506,7 @@ class Runtime:
             self._check(ident); self.status(ident, 'running')
             self.store.event(ident, 'planning', {'agent': 'main', 'text': '理解目标并选择工具'})
             caps = Capabilities(self.store, lambda: self._check(ident), settings['mode'] == 'local', settings.get('approval_policy', 'auto'))
+            caps.skill_catalog = self.skills
             # Explicit tools and offline shortcuts stay deterministic. Online
             # natural-language tasks go through the independent main/worker loop.
             direct = action or (self.direct(prompt, settings['roots']) if self.offline or prompt.startswith('/tool ') else None)

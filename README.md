@@ -6,6 +6,8 @@ macOS 个人 AI 工作台与全屏交互式终端。桌面 App、浏览器工作
 
 跨会话持久化记忆已接入 OpenViking：后台提取成功对话的长期记忆，主控在后续任务检索相关偏好与经验。App/TUI 自动管理原生记忆服务，独立发布包携带 Python、OpenViking 和嵌入模型；构建、配置和同步状态说明见 [OpenViking 记忆后台](docs/OPENVIKING_MEMORY.md)。
 
+
+标准 `SKILL.md` 技能已接入主控，支持发现、格式校验及按需加载正文与资源；安装位置和使用方式见 [Skills 说明](docs/SKILLS.md)。
 ## 截图展示
 
 ### 动画办公室

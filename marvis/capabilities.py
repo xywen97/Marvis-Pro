@@ -53,6 +53,16 @@ DIRECTORY = field('string', '目标目录路径；优先使用用户提供或工
 FILE = field('string', '文件路径；优先使用用户提供或工具返回的绝对路径，必须在授权目录内。不是目录。')
 URL = field('string', '完整公开 HTTP(S) URL；不能包含用户名或密码，不能访问本机、私网或非公开地址。')
 TOOLS = [
+    schema('skill_list', '主控：刷新并列出标准 Agent Skills 的名称、用途及无效技能诊断；不加载指令正文。', {}),
+    schema('skill_load', '主控：按名称加载标准 Skill 的完整指令和元数据。先加载再执行；不运行脚本，不授予额外权限。', {
+        'name': field('string', '技能目录名。', minLength=1, maxLength=64),
+    }, ['name']),
+    schema('skill_read', '主控：按需读取已加载 Skill 内的 UTF-8 文本资源，包括 references、scripts 源码或文本 assets；不执行。', {
+        'name': field('string', '本任务已加载的技能名。', minLength=1, maxLength=64),
+        'resource': field('string', '技能目录内相对路径，禁止 .. 和符号链接。', minLength=1, maxLength=512),
+        'offset': field('integer', '字符起点，从 0 开始。', minimum=0, default=0),
+        'limit': field('integer', '本次字符数上限。', minimum=1, maximum=8000, default=8000),
+    }, ['name', 'resource']),
     schema('delivery_evaluate', '评测助手专用：仅由用户显式提交评测请求，使用 DeepEval 评估代码、输出、指标或任务是否符合用户要求。结果与需求交回主控汇总，不作为普通任务交付门禁。不能修改产物或自行调度。', {
         'candidate': field('string', '待评测的代码、输出、指标、任务说明或文件说明。', minLength=1, maxLength=60000),
         'requirements': field('string', '用户指定的目标、验收标准、约束或合规依据；缺少时先提醒用户补充。', minLength=1, maxLength=10000),
@@ -351,6 +361,18 @@ class Capabilities(FileTools, CodingTools):
         self.check()
         validate_arguments(name, args)
         if name in MUTATIONS and plan is None: raise PermissionError('操作必须先通过确认。')
+        if name in ('skill_list', 'skill_load', 'skill_read'):
+            catalog = getattr(self, 'skill_catalog', None)
+            if catalog is None: raise ValueError('Skill 工具未绑定运行时。')
+            if name == 'skill_list': return catalog.refresh()
+            loaded = getattr(self, 'loaded_skills', None)
+            if loaded is None: self.loaded_skills = loaded = set()
+            if name == 'skill_load':
+                result = catalog.load(args['name'])
+                loaded.add(args['name'])
+                return result
+            if args['name'] not in loaded: raise ValueError('请先调用 skill_load 加载该技能。')
+            return catalog.read(args['name'], args['resource'], args.get('offset', 0), args.get('limit', 8000))
         if name == 'delivery_evaluate':
             evaluator = getattr(self, 'delivery_evaluator', None)
             if evaluator is None: raise PermissionError('评测工具只能在绑定任务的独立评测助手中执行。')

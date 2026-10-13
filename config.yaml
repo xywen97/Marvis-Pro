@@ -118,3 +118,7 @@ memory:
   managed:
     startup_timeout: 90
     max_restarts: 3
+
+# 标准 Agent Skills：用户数据目录 skills/ 默认启用；额外库按列表顺序覆盖同名技能。
+skills:
+  paths: []
