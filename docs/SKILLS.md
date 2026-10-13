@@ -75,6 +75,6 @@ Skill 指令不能覆盖用户要求、权限边界或工具所属助手。`allo
 
 当前有界读取限制：最多发现 128 个有效技能，单份 `SKILL.md` 最多 64 KiB，正文最多 16000 字符，元数据最多 4000 字符；完整加载结果超过 22000 字符时拒绝加载，不静默截断指令。附属文本资源最多 256 KiB，每页最多 8000 字符。大型技能请把详细说明放到 `references/`。
 
-本次提供格式校验、发现、模型按需加载、资源读取和审计链路；不包含远程市场下载、自动依赖安装、独立技能脚本运行器或长期记忆 Skill。旧的 Python `BaseSkill` 示例保留，与新的标准 Skill 加载器独立。
+本次提供格式校验、发现、模型按需加载、资源读取和审计链路；不包含远程市场下载、自动依赖安装、独立技能脚本运行器；内置 long-term-memory Skill 使用专用 memory_save、memory_search 工具，说明见 [长期记忆](OPENVIKING_MEMORY.md)。旧的 Python `BaseSkill` 示例保留，与新的标准 Skill 加载器独立。
 
 格式参考：[Agent Skills 规范](https://agentskills.io/specification)。

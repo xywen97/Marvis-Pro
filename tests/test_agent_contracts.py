@@ -63,7 +63,7 @@ class AgentContractsTests(unittest.TestCase):
                 self.assertIn('不设次数上限', system)
                 self.assertEqual(context['mode'], mode)
                 self.assertIn('各助手有独立的提示词、上下文和策略', system)
-                self.assertEqual(offered, {'agent_inspect', 'agent_dispatch', 'skill_list', 'skill_load', 'skill_read'})
+                self.assertEqual(offered, {'agent_inspect', 'agent_dispatch', 'skill_list', 'skill_load', 'skill_read', 'memory_save', 'memory_search'})
                 self.assertEqual('browser_read' in system, mode == 'efficiency')
                 self.assertEqual('web_search' in system, mode == 'efficiency')
                 self.assertIn('确认成功前不能声称已执行', system)

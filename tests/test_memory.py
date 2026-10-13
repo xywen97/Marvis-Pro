@@ -25,6 +25,8 @@ class MemoryTests(unittest.TestCase):
         self.fail_batch_response = False
         self.fail_commit_response = False
         self.fail_search = False
+        self.memory_records = None
+        self.memory_write_count = 2
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -41,11 +43,11 @@ class MemoryTests(unittest.TestCase):
                     owner.sessions.add(body['session_id'])
                 elif self.path == '/api/v1/search/find':
                     if owner.fail_search: code = 503
-                    result = {'memories': [{'uri': 'viking://user/marvisxy/memories/preferences/style.md', 'abstract': '用户喜欢简洁中文。'}]}
+                    result = {'memories': owner.memory_records if owner.memory_records is not None else [{'uri': 'viking://user/marvisxy/memories/preferences/style.md', 'abstract': '用户喜欢简洁中文。'}]}
                 elif self.path.startswith('/api/v1/tasks?'):
                     result = list(owner.commits.values())[-1:]
                 elif self.path.startswith('/api/v1/tasks/'):
-                    result = {'status': owner.remote_status}
+                    result = {'status': owner.remote_status, 'result': {'memories_extracted': {'memory_write': owner.memory_write_count}}}
                 else:
                     sid = self.path.split('/')[4]
                     if self.path.endswith('/messages/batch'):
@@ -118,7 +120,7 @@ class MemoryTests(unittest.TestCase):
 
     def test_recall_outage_offline_and_local_network_rules(self):
         self.fail_search = True
-        self.assertEqual(self.runtime.memory.recall(self.ident, 'test', self.runtime.settings()), [])
+        self.assertIn('unavailable', self.runtime.memory.recall(self.ident, 'test', self.runtime.settings())[0]['content'])
         self.assertIn('503', self.runtime.memory.status()['last_error'])
         self.runtime.offline = True; self.enqueue()
         before = len(self.calls)

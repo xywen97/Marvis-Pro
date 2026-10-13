@@ -53,6 +53,14 @@ DIRECTORY = field('string', '目标目录路径；优先使用用户提供或工
 FILE = field('string', '文件路径；优先使用用户提供或工具返回的绝对路径，必须在授权目录内。不是目录。')
 URL = field('string', '完整公开 HTTP(S) URL；不能包含用户名或密码，不能访问本机、私网或非公开地址。')
 TOOLS = [
+    schema('memory_save', '主控：提交用户明确提供的长期信息给 OpenViking，返回 request_id 与真实状态。仅 saved 可确认写入，processing 不能说已记住。先加载 long-term-memory Skill，无需文件操作。', {
+        'text': field('string', '用户明确提供或确认的姓名、偏好或长期约定；不添加推测。', minLength=1, maxLength=4000),
+        'wait_seconds': field('integer', '最多等待秒数；超时仍后台保存，不反复调用。', minimum=0, maximum=30, default=20),
+    }, ['text']),
+    schema('memory_search', '主控：查询 OpenViking 长期记忆；协调正在保存的请求，再返回具体事实与来源。processing 不能断言无记录。先加载 long-term-memory Skill，不使用文件或知识库工具替代。', {
+        'query': field('string', '当前用户关于姓名、偏好、历史约定等的问题。', minLength=1, maxLength=4000),
+        'wait_seconds': field('integer', '等待先前保存请求的最大秒数。', minimum=0, maximum=30, default=20),
+    }, ['query']),
     schema('skill_list', '主控：刷新并列出标准 Agent Skills 的名称、用途及无效技能诊断；不加载指令正文。', {}),
     schema('skill_load', '主控：按名称加载标准 Skill 的完整指令和元数据。先加载再执行；不运行脚本，不授予额外权限。', {
         'name': field('string', '技能目录名。', minLength=1, maxLength=64),
@@ -361,6 +369,12 @@ class Capabilities(FileTools, CodingTools):
         self.check()
         validate_arguments(name, args)
         if name in MUTATIONS and plan is None: raise PermissionError('操作必须先通过确认。')
+        if name in ('memory_save', 'memory_search'):
+            handler = getattr(self, 'memory_tools', None)
+            if handler is None: raise ValueError('记忆工具未绑定运行时。')
+            if 'long-term-memory' not in getattr(self, 'loaded_skills', set()):
+                raise ValueError('请先用 skill_load 加载 long-term-memory Skill，不要调用文件工具替代。')
+            return handler(name, args)
         if name in ('skill_list', 'skill_load', 'skill_read'):
             catalog = getattr(self, 'skill_catalog', None)
             if catalog is None: raise ValueError('Skill 工具未绑定运行时。')

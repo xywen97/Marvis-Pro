@@ -135,10 +135,18 @@ class NativeMemoryService:
         if process.poll() is None:
             try: os.killpg(process.pid, signal.SIGTERM)
             except ProcessLookupError: pass
+            except PermissionError:
+                # The stdin guardian may exit the process-group leader between
+                # poll and killpg on macOS. Fall back to our own child PID.
+                try: process.terminate()
+                except ProcessLookupError: pass
             try: process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 try: os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError: pass
+                except PermissionError:
+                    try: process.kill()
+                    except ProcessLookupError: pass
                 process.wait(timeout=5)
         self.process = None
 

@@ -8,6 +8,7 @@ from marvis.prompts import build_system_prompt, build_worker_prompt
 from marvis.store import uid
 from marvis.team import TOOL_AGENTS, AGENT_STRATEGIES, agent_tool_names, tool_message
 from marvis.evaluation import measure
+from marvis.memory_skill import memory_intent, memory_reply
 from marvis.failure_evidence import failure_evidence, failed_record
 
 
@@ -269,6 +270,15 @@ class Coordinator:
         self.runtime.skills.refresh()
         system += self.runtime.skills.prompt()
         task = self.runtime.store.one('SELECT prompt FROM tasks WHERE id=?', (self.ident,))
+        kind = memory_intent(task['prompt'])
+        if kind:
+            # The simple user request already provides the required arguments;
+            # runtime state, not a model promise, determines the final answer.
+            self.physical_tool('main', {'id': uid(), 'function': {'name': 'skill_load', 'arguments': '{"name":"long-term-memory"}'}})
+            name = 'memory_save' if kind == 'save' else 'memory_search'
+            arguments = {'text' if kind == 'save' else 'query': task['prompt']}
+            result = self.physical_tool('main', {'id': uid(), 'function': {'name': name, 'arguments': json.dumps(arguments, ensure_ascii=False)}})
+            return memory_reply(result, kind)
         memory = self.runtime.memory.recall(self.ident, task['prompt'], self.settings)
         messages = [{'role': 'system', 'content': system}] + memory + self.runtime.context_messages(self.session_id, self.ident)
         self.remember_ids(messages)

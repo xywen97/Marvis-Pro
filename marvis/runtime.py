@@ -15,6 +15,7 @@ from marvis.evaluation import EVALUATION_INTAKE, is_evaluation_wakeup
 from marvis.context_manager import ContextManager, ContextPolicy, estimate_tokens
 from marvis.memory import MemoryEngine
 from marvis.skill_catalog import SkillCatalog
+from marvis.memory_skill import memory_intent
 
 
 class Cancelled(Exception): pass
@@ -357,6 +358,7 @@ class Runtime:
         tasks = self.store.rows('SELECT * FROM tasks ORDER BY created DESC LIMIT 80')
         for task in tasks:
             task['events'] = self.store.events(task['id'])
+            task['memory_requests'] = [self.memory.request_status(r) for r in self.store.rows('SELECT * FROM memory_outbox WHERE task_id=? OR origin_task=? ORDER BY updated', (task['id'], task['id']))]
             with self.lock:
                 pending = self.approvals.get(task['id'])
                 task['approval'] = pending['plan'] if pending else None
@@ -507,6 +509,7 @@ class Runtime:
             self.store.event(ident, 'planning', {'agent': 'main', 'text': '理解目标并选择工具'})
             caps = Capabilities(self.store, lambda: self._check(ident), settings['mode'] == 'local', settings.get('approval_policy', 'auto'))
             caps.skill_catalog = self.skills
+            caps.memory_tools = lambda name, args: self.memory.save(ident, session_id, args['text'], settings, args.get('wait_seconds', 20), caps.check) if name == 'memory_save' else self.memory.search(ident, args['query'], settings, args.get('wait_seconds', 20), caps.check)
             # Explicit tools and offline shortcuts stay deterministic. Online
             # natural-language tasks go through the independent main/worker loop.
             direct = action or (self.direct(prompt, settings['roots']) if self.offline or prompt.startswith('/tool ') else None)
@@ -526,15 +529,30 @@ class Runtime:
                     reply = coordinator.summarize_user_evaluation(review)
                     evaluation_status = 'completed' if review['status'] == 'completed' else 'failed'
                 else:
+                    if direct['tool'] in ('memory_save', 'memory_search'):
+                        self._tool(ident, caps, 'skill_load', {'name': 'long-term-memory'})
                     result = self._tool(ident, caps, direct['tool'], direct.get('arguments', {}))
                     reply = self.format_result(result)
             else:
                 reply = self._chat(ident, session_id, prompt, caps, settings)
+            # Provider prose cannot turn queue acceptance into a saved-memory claim.
+            saves = [e['content']['result'] for e in self.store.events(ident) if e['kind'] == 'tool_result'
+                     and e['content'].get('tool') == 'memory_save']
+            if saves:
+                confirmations = []
+                for result in saves:
+                    row = self.store.one('SELECT * FROM memory_outbox WHERE task_id=?', (result.get('request_id'),))
+                    confirmations.append(self.memory.request_status(row) if row else result)
+                if any(result['status'] != 'saved' for result in confirmations):
+                    guarded = re.sub(r'记住了|记下了|(?:已经|已)(?:记住|记下|保存|存入)(?:了)?|保存成功|保存好了', '尚未确认保存完成', reply)
+                    if guarded != reply:
+                        reply = guarded + '\n\n长期记忆状态：' + '；'.join(result['message'] for result in confirmations)
+                        self.store.event(ident, 'memory_reply_corrected', {'text': '未确认写入，已纠正提前宣称保存成功的回复。'})
             self._check(ident)
             self.store.add_message(session_id, 'assistant', reply, ident)
             status = evaluation_status or 'completed'
             self.status(ident, status, reply); self.store.event(ident, status, {'text': '评测不可用' if status == 'failed' else '任务完成'})
-            if not direct and status == 'completed' and not is_evaluation_wakeup(prompt):
+            if not direct and status == 'completed' and not is_evaluation_wakeup(prompt) and memory_intent(prompt) != 'search':
                 self.memory.enqueue(ident, session_id, settings)
         except Cancelled as e:
             self._preserve_partial_reply(ident)
@@ -610,7 +628,17 @@ class Runtime:
         self.store.event(ident, 'model_start', {'text': '正在生成处理方案与回复', 'step': step, 'model': client.model, 'agent': agent, 'request_id': request_id})
         parts = []; event_id = None; last_flush = 0.0; last_usage = 0.0
         # Status/evaluation summaries publish atomically; ordinary answers stream normally.
-        hold_candidate = agent == 'main' and status_summary
+        memory_context = False
+        if agent == 'main':
+            prompt = self.store.one('SELECT prompt FROM tasks WHERE id=?', (ident,))['prompt']
+            memory_context = bool(re.search(r'记住|记下|长期记忆|保存.*(?:信息|偏好|名字|姓名)', prompt))
+            if not memory_context:
+                memory_context = any(e['kind'] == 'tool_result' and e['content'].get('tool') == 'skill_load'
+                                     and e['content'].get('result', {}).get('name') == 'long-term-memory'
+                                     for e in self.store.events(ident))
+        # Memory prose is published only after checking real save results, so a
+        # premature provider claim cannot briefly leak through the stream.
+        hold_candidate = agent == 'main' and (status_summary or memory_context)
         tool_events = {}; tool_parts = {}
         def check_turn():
             self._check(ident)
@@ -688,7 +716,7 @@ class Runtime:
     def _chat(self, ident, session_id, prompt, caps, settings):
         if self.offline: return '离线运行：可使用文件、知识库和系统工具。复杂自然语言任务需要配置模型并关闭 --offline。'
         client = self.model(settings)
-        if not client.configured: return '模型尚未配置。请在设置中填写模型端点和名称，API Key 放在 .env。文件与系统工具无需模型即可运行。'
+        if not client.configured and not memory_intent(prompt): return '模型尚未配置。请在设置中填写模型端点和名称，API Key 放在 .env。文件与系统工具无需模型即可运行。'
         from marvis.coordinator import Coordinator
         coordinator = Coordinator(self, ident, session_id, caps, settings)
         try: return coordinator.run()

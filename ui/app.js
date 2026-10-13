@@ -178,11 +178,35 @@ async function renderMessages() {
  AgentProgress.sync(box,specs);scrollTail();
 }
 async function submit(prompt, action) { const result=await api('tasks',{prompt,session_id:session,action});session=result.session_id;showPage('chat');await renderMessages();await refresh(); }
-function renderTasks() { const box=$('#task-list');box.replaceChildren();if(!state.tasks.length){box.append(el('div','empty','还没有任务。\n从工作台发送第一条指令。'));return;}for(const t of state.tasks){const card=el('div','task-card');card.append(el('h3','',t.prompt));const meta=el('div','task-meta');meta.append(el('span','',new Date(t.created*1000).toLocaleString()),el('span','status '+t.status,statuses[t.status]));card.append(meta);const controls=el('div','task-actions');controls.append(btn('打开对话',async()=>{session=t.session_id;showPage('chat');await renderMessages();}));if(busy(t))controls.append(btn('停止任务',()=>api('cancel',{id:t.id})));if(t.approval)controls.append(btn('查看待确认操作',()=>{approvalId=t.id;$('#approval-plan').textContent=JSON.stringify(t.approval,null,2);$('#approval-dialog').showModal();}));card.append(controls);const details=el('details');details.append(el('summary','',`执行记录 · ${t.events.length} 步`));for(const e of t.events){const step=el('div','event');step.append(el('strong','',e.kind+' · '+new Date(e.created*1000).toLocaleTimeString()),el('pre','',JSON.stringify(e.content,null,2)));details.append(step);}card.append(details);box.append(card);} }
+function renderTasks() {
+ const box=$('#task-list');
+ const expanded=new Set([...box.querySelectorAll('.task-card')].filter(card=>card.querySelector('details[open]')).map(card=>card.dataset.taskId));
+ box.replaceChildren();
+ if(!state.tasks.length){box.append(el('div','empty','还没有任务。\n从工作台发送第一条指令。'));return;}
+ for(const t of state.tasks){
+  const card=el('div','task-card');card.dataset.taskId=String(t.id);
+  const row=el('div','task-topline'),info=el('div','task-info'),title=el('h3','',t.prompt);title.title=t.prompt;
+  const meta=el('div','task-meta');meta.append(el('span','',new Date(t.created*1000).toLocaleString()));
+  info.append(title,meta);
+  const controls=el('div','task-actions');
+  controls.append(el('span','status '+t.status,statuses[t.status]),btn('打开对话',async()=>{session=t.session_id;showPage('chat');await renderMessages();}));
+  if(busy(t))controls.append(btn('停止任务',()=>api('cancel',{id:t.id})));
+  if(t.approval)controls.append(btn('查看待确认操作',()=>{approvalId=t.id;$('#approval-plan').textContent=JSON.stringify(t.approval,null,2);$('#approval-dialog').showModal();}));
+  row.append(info,controls);card.append(row);
+  if(t.memory_requests?.length){
+   const names={saved:'已写入长期记忆',processing:'长期记忆正在保存',no_change:'记忆处理完成，未新增内容',unconfirmed:'记忆写入尚未确认',failed:'记忆保存失败'};
+   for(const r of t.memory_requests){const note=el('p','hint',names[r.status]||r.message);if(r.error)note.textContent+='：'+r.error;card.append(note);}
+  }
+  const details=el('details');details.open=expanded.has(String(t.id));
+  details.append(el('summary','',`执行记录 · ${t.events.length} 步`));
+  for(const e of t.events){const step=el('div','event');step.append(el('strong','',e.kind+' · '+new Date(e.created*1000).toLocaleTimeString()),el('pre','',JSON.stringify(e.content,null,2)));details.append(step);}
+  card.append(details);box.append(card);
+ }
+}
 function renderWorkflows(){const box=$('#workflow-list');box.replaceChildren();if(!state.workflows.length){box.append(el('div','empty','选择模板，或创建你的第一个自动化工作流。'));return;}for(const w of state.workflows){const row=el('div','workflow-row');row.append(el('h3','',w.name),el('p','hint',w.prompt));row.append(el('p','hint',w.enabled?`每 ${w.interval/60} 分钟 · 下次执行 ${new Date(w.next_run*1000).toLocaleString()}`:'已暂停'));const controls=el('div','task-actions');controls.append(btn('立即运行',async()=>{const t=await api('workflow-action',{id:w.id,action:'run'});session=t.session_id;showPage('chat');await renderMessages();await refresh();}),btn(w.enabled?'暂停':'恢复',async()=>{await api('workflow-action',{id:w.id,action:'toggle'});await refresh();}),btn('删除',async()=>{await api('workflow-action',{id:w.id,action:'delete'});await refresh();}));row.append(controls);box.append(row);} }
 let knowledgeTimer;
 async function loadKnowledge(){const result=await api('knowledge?q='+encodeURIComponent($('#knowledge-query').value));const filter=$('#knowledge-filter').value;const files=result.files.filter(f=>!filter||f.category===filter);const box=$('#knowledge-list');box.replaceChildren();if(!files.length){box.append(el('div','empty','这里还没有匹配的文件。\n添加目录并建立索引，或换一个搜索关键词。'));return;}for(const f of files){const row=el('div','file-row');row.append(el('span','file-icon',f.category==='图片'?'▧':'▤'));const info=el('div','file-info');info.append(el('strong','',f.name),el('small','',f.path),el('small','',`${f.category} · ${(f.size/1024).toFixed(1)} KB · ${new Date(f.modified*1000).toLocaleDateString()}`));row.append(info);if(f.category!=='图片')row.append(btn('读取',()=>submit('读取 '+f.name,{tool:'file_read',arguments:{path:f.path}})));else row.append(btn('OCR',()=>submit('识别图片文字 '+f.name,{tool:'image_ocr',arguments:{path:f.path}})));box.append(row);} }
-function renderMemoryStatus(){const toggle=$('#memory-enabled');if(toggle&&!toggle.disabled)toggle.checked=state.settings.memory_enabled===true;const node=$('#memory-status');if(!node)return;const memory=state.memory,service=memory?.service;const names={starting:'记忆服务正在启动',restarting:'记忆服务正在恢复',ready:'记忆服务已就绪',failed:'记忆服务暂不可用',stopped:'记忆服务已停止',disabled:'长期记忆已停用',external:'已配置外部记忆服务'};node.textContent=memory?.enabled===false?'长期记忆已停用':names[service?.state]||'长期记忆未启用';if(service?.error)node.textContent+='：'+service.error;else if(memory?.last_error)node.textContent+='；'+memory.last_error;}
+function renderMemoryStatus(){const toggle=$('#memory-enabled');if(toggle&&!toggle.disabled)toggle.checked=state.settings.memory_enabled===true;const node=$('#memory-status');if(!node)return;const memory=state.memory,service=memory?.service;const names={starting:'记忆服务正在启动',restarting:'记忆服务正在恢复',ready:'记忆服务已就绪',failed:'记忆服务暂不可用',stopped:'记忆服务已停止',disabled:'长期记忆已停用',external:'已配置外部记忆服务'};node.textContent=memory?.enabled===false?'长期记忆已停用':names[service?.state]||'长期记忆未启用';const pending=(memory?.deliveries?.pending||0)+(memory?.deliveries?.extracting||0);if(memory?.active&&pending)node.textContent+=`；正在保存 ${pending} 条记忆`;if(service?.error)node.textContent+='：'+service.error;else if(memory?.last_error)node.textContent+='；'+memory.last_error;}
 function fillSettings(){const f=$('#settings-form');f.elements.memory_enabled.checked=state.settings.memory_enabled===true;f.elements.mode.value=state.settings.mode;f.elements.base_url.value=state.settings.model.base_url||'http://127.0.0.1:11434/v1';f.elements.model.value=state.settings.model.model||'qwen3:latest';f.elements.roots.value=state.settings.roots.join('\n');}
 function pathDialog(action,title,defaultValue,hint){pathAction=action;$('#path-title').textContent=title;$('#path-hint').textContent=hint||'请输入已授权目录内的完整路径。';$('#path-value').value=defaultValue||state?.settings.roots[0]||'';$('#path-query').value='';$('#path-query').classList.toggle('hidden',action!=='files');$('#path-dialog').showModal();$('#path-value').focus();}
 $('#chat-form').onsubmit=e=>{e.preventDefault();const p=$('#prompt').value.trim();if(!p)return;safe(async()=>{

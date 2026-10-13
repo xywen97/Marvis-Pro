@@ -32,6 +32,11 @@ async function run(){
   await page.reload();await page.waitForFunction(()=>liveConnected);
   await page.locator('[data-page=settings]').click();assert.equal(await key.inputValue(),'');
   assert.equal(await toggle.isChecked(),false);
+  fixture.stdin.write(JSON.stringify({action:'memory_pending'})+'\n');
+  await page.locator('[data-page=tasks]').click();
+  await page.getByText('长期记忆正在保存',{exact:true}).waitFor();
+  fixture.stdin.write(JSON.stringify({action:'memory_saved'})+'\n');
+  await page.getByText('已写入长期记忆',{exact:true}).waitFor();
   assert.deepEqual(errors,[]);
   console.log('Memory UI passed: visible lifecycle, masked key input, no key echo, persisted model credentials.');
  }finally{if(browser)await browser.close();fixture.stdin.end();}

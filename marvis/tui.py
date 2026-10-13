@@ -298,6 +298,9 @@ class Terminal:
         service = (snapshot.get('memory') or {}).get('service') or {}
         names = {'ready': '已就绪', 'starting': '正在启动', 'restarting': '正在恢复', 'failed': '暂不可用', 'stopped': '已停止', 'disabled': '已停用', 'external': '外部服务'}
         memory = '长期记忆：' + names.get(service.get('state'), '未启用')
+        counts = (snapshot.get('memory') or {}).get('deliveries', {})
+        pending = counts.get('pending', 0) + counts.get('extracting', 0)
+        if (snapshot.get('memory') or {}).get('active') and pending: memory += f'；正在保存 {pending} 条记忆'
         if service.get('error'): memory += '；' + service['error']
         return '设置 · /mode /model /key /roots\n\n' + json.dumps(snapshot['settings'], ensure_ascii=False, indent=2) + '\n\n' + memory + '\n本地模式：Ollama 127.0.0.1:11434 / qwen3:latest\n/key 隐藏输入模型密钥，不写入对话记录。'
 
