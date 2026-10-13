@@ -12,16 +12,28 @@ def memory_intent(prompt):
     return None
 
 
-def memory_reply(result, kind):
+def relevant_records(records, query):
+    if re.search(r'是谁|名字|姓名|称呼|叫什么', query):
+        return [r for r in records if r['uri'].endswith('/profile.md') or re.search(r'姓名|名字|称呼', r['text'])]
+    if '吃' in query or '水果' in query:
+        return [r for r in records if re.search(r'吃|水果|饮食|食物|口味|food|fruit|diet', r['text']+' '+r['uri'], re.I)]
+    if re.search(r'喜欢|偏好|喜好', query):
+        return [r for r in records if '/preferences/' in r['uri'] or re.search(r'喜欢|偏好|喜好', r['text'])]
+    return records
+
+
+def memory_reply(result, kind, query=''):
     status = result['status']
     if kind == 'save':
         if status == 'saved': return 'OpenViking 已完成长期记忆写入。'
         if status == 'processing': return '已提交后台保存，正在处理中，尚未确认保存完成。完成后界面的记忆状态会更新。'
         return result.get('message', '记忆保存未确认完成。') + ('\n' + result['error'] if result.get('error') else '')
     if status in ('disabled', 'unavailable'): return result['message']
-    records = result.get('records', [])
+    records = relevant_records(result.get('records', []), query)
     if records:
-        text = '根据已保存的长期记忆：\n\n' + '\n\n'.join(r['text'] for r in records)
+        # No model is configured: retain a short factual fallback rather than
+        # dumping every retrieved document into the user-facing answer.
+        text = re.sub(r'(?m)^\s*(?:#+\s*|[-*]\s*)', '', records[0]['text']).strip()[:300]
     else:
         text = '本次检索没有匹配到相关的长期记忆。'
     if status == 'processing': text += '\n\n还有信息正在保存，本次结果可能不完整；不能据此判断这些信息不存在。'

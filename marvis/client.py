@@ -41,11 +41,12 @@ class RemoteRuntime:
     def new_session(self, session_id=None):return self.call('sessions',{'session_id':session_id})['id']
     def submit(self,prompt,session_id=None,action=None):return self.call('tasks',{'prompt':prompt,'session_id':session_id,'action':action})
     def cancel(self,ident):return self.call('cancel',{'id':ident})
-    def approve(self,ident,approved):return self.call('approve',{'id':ident,'approved':approved})
+    def approve(self,ident,approved,task_scope=False,approval_id=None):return self.call('approve',{'id':ident,'approved':approved,'task_scope':task_scope,'approval_id':approval_id})
     def update_settings(self,values):return self.call('settings',values)
-    def knowledge(self,query=''):
-        from urllib.parse import quote
-        return self.call('knowledge?q='+quote(query))
+    def knowledge(self,query='',mode='keyword',category='',offset=0):
+        return self.call('knowledge?'+urllib.parse.urlencode({'q':query,'mode':mode,'category':category,'offset':offset}))
+    def knowledge_sync(self):return self.call('knowledge-sync',{})
+    def knowledge_preview(self,path):return self.call('knowledge-preview?'+urllib.parse.urlencode({'path':path}))
     def add_workflow(self,name,prompt,interval):return self.call('workflows',{'name':name,'prompt':prompt,'interval':interval})
     def workflow_action(self,ident,action):return self.call('workflow-action',{'id':ident,'action':action})
     def client_lease(self, data):return self.call('engine-client', data)

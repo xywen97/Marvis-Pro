@@ -80,7 +80,7 @@ TOOLS = [
         'source_task_id': field('string', '可选：当前会话已选历史路径中的任务 ID，附带其真实执行证据。', maxLength=64),
     }, ['candidate', 'requirements']),
     schema('code_check', '编程助手：无执行地检查 Python 或 JSON 语法，最多 2 MB UTF-8 文本。返回 valid、sha256 和错误行列；语法通过不证明功能正确，不检查其他语言或项目依赖。', {'path': FILE}, ['path']),
-    schema('code_execute', '编程助手：经用户确认，在真实电脑的授权工作目录运行代码任务命令，如测试、构建或 Git 状态检查。argv 数组按字面传入，shell=False，不自动展开管道或变量。没有沙箱；进程继承环境权限，可访问目录外文件和网络。预览展示完整参数与风险。超时或取消终止进程组；输出合并 stdout/stderr 并限长，非零退出返回 error。本地模式禁用。不得绕过文件权限或用户拒绝，不自行提交、推送、发布或启动长期服务。', {
+    schema('code_execute', '编程助手：经用户确认，在真实电脑的授权工作目录运行代码任务命令，如测试、构建或 Git 状态检查。argv 数组按字面传入，shell=False，不自动展开管道或变量。没有沙箱；进程继承权限，可访问目录外文件和网络；移除继承的 Python 配置变量，裸 python 优先 cwd 下 .venv。预览展示完整参数与风险。超时或取消终止进程组；输出合并 stdout/stderr 并限长，非零退出返回 error。本地模式禁用。不得绕过文件权限或用户拒绝，不自行提交、推送、发布或启动长期服务。', {
         'argv': field('array', '可执行程序及其参数，如 ["python3", "-m", "unittest"]; 不填 shell 拼接字符串。', items={'type': 'string'}, minItems=1, maxItems=100),
         'cwd': DIRECTORY,
         'timeout': field('integer', '最长执行秒数，超时终止进程组。', minimum=1, maximum=120, default=60),
@@ -107,6 +107,7 @@ TOOLS = [
         'path': DIRECTORY,
         'pattern': field('string', '无 / 时匹配任意层级文件名，如 *.py；含 / 时匹配相对路径，如 src/*.py、**/*.md。支持 *、?、[]，** 独立段匹配零或多层目录；不支持 {} 扩展。', maxLength=200),
         'recursive': field('boolean', '是否搜索子目录，false 只检查直接子级文件。', default=True),
+        'include_generated': field('boolean', '默认递归搜索跳过 build/dist/target/vendor/site-packages 等生成或依赖目录；确需检查这些目录时设 true 或直接指定该目录。', default=False),
         'case_sensitive': field('boolean', '是否区分大小写。', default=False),
         'offset': field('integer', '跳过的匹配数，下一页使用 next_offset。', minimum=0, maximum=5000, default=0),
         'limit': field('integer', '本页最多返回匹配文件数。', minimum=1, maximum=100, default=100),
@@ -115,6 +116,7 @@ TOOLS = [
         'path': field('string', '授权范围内的文件或目录路径；先缩小范围再搜索。'),
         'query': field('string', '非空的字面文本子串，匹配单行；不支持跨行或正则表达式。'),
         'glob': field('string', '可选文件通配符，语义与 file_glob.pattern 相同，如 *.py、**/*.md。', default='*', maxLength=200),
+        'include_generated': field('boolean', '是否递归搜索生成和依赖目录；默认跳过，明确检查时可开启或直接指定目录。', default=False),
         'case_sensitive': field('boolean', '是否区分大小写。', default=False),
         'context': field('integer', '每条命中前后各显示多少行，行号为元数据。', minimum=0, maximum=3, default=0),
         'offset': field('integer', '跳过的命中行数，下一页使用 next_offset。', minimum=0, maximum=5000, default=0),
@@ -142,9 +144,10 @@ TOOLS = [
         'path': FILE,
         'format': field('string', '目标格式：json/md 仅用于 CSV，csv 仅用于对象数组 JSON，txt 用于文本或支持的文档。', enum=['json', 'csv', 'md', 'txt']),
     }, ['path', 'format']),
-    schema('knowledge_index', '文件管家：扫描目录，增量更新本地文档文本及图片元数据索引，写入助手数据库，不改源文件，无需确认。最多扫描 5000 文件；返回 indexed、unchanged、text_unavailable、scan_truncated。没有实时监控、向量检索、人像/语义识别，图片不会自动 OCR；索引文本有提取上限。', {'path': DIRECTORY}, ['path']),
-    schema('knowledge_search', '搜索助手：按文件名或已索引文本子串查询本地知识库，最多返回 100 个授权且存在的文件及摘要。不是完整原文或语义搜索；缺少索引先 knowledge_index，stale=true 时原文件已变化，需重新索引或 file_read 核实。has_more=true 时缩小关键词，无分页参数。', {
-        'query': field('string', '非空检索子串，保留用户实体名称和关键术语；不支持正则或自然语言过滤表达式。'),
+    schema('knowledge_index', '文件管家：扫描目录，增量更新本地文档文本及图片元数据索引，写入助手数据库，不改源文件，无需确认。最多扫描 5000 文件；返回 indexed、unchanged、text_unavailable、scan_truncated。OpenViking 服务就绪时后台同步文档语义索引；本工具完成不代表语义处理已完成。没有实时文件监控，图片不会自动 OCR；索引文本有提取上限。', {'path': DIRECTORY}, ['path']),
+    schema('knowledge_search', '搜索助手：默认 keyword 按文件名或已索引文本子串查询；mode=semantic 通过 OpenViking 按含义检索已同步文档。最多返回 100 个授权且存在的文件及摘要和原文件路径。缺少索引先 knowledge_index；stale=true 需重新索引或 file_read 核实。语义结果 status=unavailable 表示服务未就绪，不代表没有资料。has_more=true 时缩小关键词，无分页参数。', {
+        'query': field('string', '非空检索内容；keyword 使用子串匹配，semantic 使用自然语言语义检索。'),
+        'mode': field('string', 'keyword 关键词搜索，semantic OpenViking 文档语义搜索；默认 keyword。', enum=['keyword', 'semantic'], default='keyword'),
     }, ['query']),
     schema('image_ocr', '文件管家：用本机 tesseract 提取图片文字，不上传；返回 text、language、notice，不解释视觉场景。需已安装程序和语言包；省略 language 时优先中英双语，其次中文，其次英文，英文降级会提示；识别结果可能有误。', {
         'path': FILE,
@@ -256,11 +259,11 @@ class Capabilities(FileTools, CodingTools):
             raise PermissionError('不能操作助手自己的数据库。')
         return p
 
-    def walk(self, base, limit=5000):
+    def walk(self, base, limit=5000, exclude_dirs=()):
         count = 0
         for root, dirs, files in os.walk(base, followlinks=False):
             self.check()
-            dirs[:] = sorted(d for d in dirs if d not in SKIP and not d.startswith('.') and not (Path(root) / d).is_symlink())
+            dirs[:] = sorted(d for d in dirs if d not in SKIP and d not in exclude_dirs and not d.startswith('.') and not (Path(root) / d).is_symlink())
             for name in sorted(files):
                 self.check()
                 if name.startswith('.'): continue
@@ -553,6 +556,10 @@ class Capabilities(FileTools, CodingTools):
             return {'indexed': indexed, 'unchanged': unchanged, 'text_unavailable': skipped, 'scan_limit': 5000, 'scanned': scanned,
                     'scan_truncated': scanned >= 5000, 'images': '仅文件名、类型和时间元数据；不包含人像识别'}
         if name == 'knowledge_search':
+            engine = getattr(self, 'knowledge_engine', None)
+            if args.get('mode', 'keyword') == 'semantic':
+                if engine is None: raise ValueError('语义知识库未绑定运行时。')
+                return engine.search(args['query'], 'semantic', limit=100)
             query = args['query'].replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
             allowed = []; offset = 0
             while len(allowed) < 101:

@@ -51,6 +51,24 @@ class ServerTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):self.request('/api/live',token='bad')
         with self.assertRaises(urllib.error.HTTPError) as ctx:self.request('/api/tasks',{'prompt':'x'},origin='https://evil.example')
         self.assertEqual(ctx.exception.code,403)
+
+    def test_knowledge_browse_preview_and_sync_api(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.runtime.update_settings({'roots':[root]})
+            file=Path(root)/'knowledge.md';file.write_text('知识库文档与语义搜索')
+            from marvis.capabilities import Capabilities
+            Capabilities(self.runtime.store).execute('knowledge_index',{'path':root})
+            _,body,_=self.request('/api/knowledge')
+            result=json.loads(body);self.assertEqual(result['total'],1)
+            self.assertEqual(result['files'][0]['name'],'knowledge.md')
+            _,body,_=self.request('/api/knowledge-preview?path='+quote(str(file)))
+            self.assertEqual(json.loads(body)['text'],file.read_text())
+            _,body,_=self.request('/api/knowledge?mode=semantic&q='+quote('资料如何检索'))
+            self.assertEqual(json.loads(body)['status'],'unavailable')
+            _,body,_=self.request('/api/knowledge-sync',{})
+            self.assertFalse(json.loads(body)['available'])
+            for asset in ('/knowledge.js','/knowledge.css'):self.assertEqual(self.request(asset)[0],200)
+            with self.assertRaises(urllib.error.HTTPError):self.request('/api/knowledge?offset=-1')
     def test_live_pushes_state_changes_before_connection_ends(self):
         request=urllib.request.Request(self.base+'/api/live',headers={'X-Marvis-Token':self.token})
         with urllib.request.urlopen(request,timeout=3) as response:

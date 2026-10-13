@@ -86,6 +86,43 @@ class IndependentAgentTests(unittest.TestCase):
         validate(result, RESULT_SCHEMA)
         self.assertEqual(result['agent'], 'coding'); self.assertEqual(len(result['evidence']), 2)
 
+    def test_failed_python_start_recovers_without_second_agent_review(self):
+        self.runtime.update_settings({'approval_policy': 'full'})
+        path = self.root / 'example.py'; path.write_text("assert 1 + 1 == 2\nprint('verified')\n")
+        count = 0
+        def respond(messages, **kwargs):
+            nonlocal count
+            if self.main(kwargs):
+                if messages[-1]['role'] != 'tool': return dispatch_reply('coding', '运行并验证文件', str(path))
+                report = json.loads(messages[-1]['content'])
+                self.assertEqual(report['status'], 'completed')
+                self.assertEqual(report['unresolved_failures'], [])
+                self.assertIn('error', report['evidence'][0]['result'])
+                self.assertEqual(report['evidence'][1]['result']['exit_code'], 0)
+                return ChatResult.success('验证完成')
+            count += 1
+            if count < 3:
+                interpreter = str(self.root / 'missing' / 'python3') if count == 1 else 'python3'
+                return tool_reply('code_execute', {'argv': [interpreter, str(path)], 'cwd': str(self.root)})
+            return report_reply('解释器启动失败后已成功恢复并验证')
+        task = self.submit(respond)
+        self.assertEqual(sum(e['kind'] == 'agent_start' for e in self.runtime.store.events(task['id'])), 1)
+
+    def test_unresolved_syntax_failure_cannot_claim_completed(self):
+        path = self.root / 'broken.py'; path.write_text('def broken(\n')
+        count = 0
+        def respond(messages, **kwargs):
+            nonlocal count
+            if self.main(kwargs):
+                if messages[-1]['role'] != 'tool': return dispatch_reply('coding', '检查语法', str(path))
+                report = json.loads(messages[-1]['content'])
+                self.assertEqual(report['status'], 'partial')
+                self.assertEqual(len(report['unresolved_failures']), 1)
+                return ChatResult.success('语法仍未通过')
+            count += 1
+            return tool_reply('code_check', {'path': str(path)}) if count == 1 else report_reply('虚假的完成报告')
+        self.submit(respond)
+
     def test_handoff_is_returned_to_main_and_only_main_bridges_it(self):
         stages = []; request_ids = []
         def respond(messages, **kwargs):

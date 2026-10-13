@@ -16,6 +16,8 @@ from marvis.context_manager import ContextManager, ContextPolicy, estimate_token
 from marvis.memory import MemoryEngine
 from marvis.skill_catalog import SkillCatalog
 from marvis.memory_skill import memory_intent
+from marvis.task_authorization import TaskAuthorization
+from marvis.task_timing import task_timing
 
 
 class Cancelled(Exception): pass
@@ -45,6 +47,8 @@ class Runtime:
         self.cancels = {}; self.approvals = {}
         self.client_leases = None
         self.memory = MemoryEngine(self)
+        from marvis.knowledge import KnowledgeEngine
+        self.knowledge_engine = KnowledgeEngine(self)
         self.scheduler = threading.Thread(target=self._schedule, daemon=True)
         self.scheduler.start()
 
@@ -339,8 +343,17 @@ class Runtime:
         self.store.execute('UPDATE entries SET label=? WHERE id=?', (label, node_id))
         return {'ok': True}
 
-    def knowledge(self, query=''):
-        return Capabilities(self.store).execute('knowledge_search', {'query': query})
+    def knowledge(self, query='', mode='keyword', category='', offset=0):
+        return self.knowledge_engine.search(query, mode, category, offset)
+
+    def knowledge_sync(self):
+        return self.knowledge_engine.retry()
+
+    def knowledge_preview(self, path):
+        caps = self.knowledge_engine.caps()
+        if not self.store.one('SELECT path FROM documents WHERE path=?', (str(caps.path(path)),)):
+            raise ValueError('文件尚未建立索引。')
+        return {'path': str(caps.path(path)), 'text': caps.read(path)[:12000]}
 
     def image(self, path):
         import base64
@@ -358,6 +371,7 @@ class Runtime:
         tasks = self.store.rows('SELECT * FROM tasks ORDER BY created DESC LIMIT 80')
         for task in tasks:
             task['events'] = self.store.events(task['id'])
+            task['timing'] = task_timing(task)
             task['memory_requests'] = [self.memory.request_status(r) for r in self.store.rows('SELECT * FROM memory_outbox WHERE task_id=? OR origin_task=? ORDER BY updated', (task['id'], task['id']))]
             with self.lock:
                 pending = self.approvals.get(task['id'])
@@ -372,7 +386,7 @@ class Runtime:
                 'skills': self.skills.list(),
                 'context_policy': {'model': model, 'window_tokens': policy.window_tokens, 'trigger_tokens': policy.trigger},
                 'workflows': self.store.rows('SELECT * FROM workflows ORDER BY next_run'),
-                'knowledge_count': self.store.one('SELECT count(*) AS n FROM documents')['n']}
+                'knowledge_count': self.knowledge_engine.visible_count()}
 
     def submit(self, prompt, session_id=None, action=None):
         prompt = str(prompt).strip()
@@ -416,11 +430,18 @@ class Runtime:
         self.store.event(ident, 'cancel_requested', {'text': '已请求停止；正在进行的网络请求或工具将在返回后停止。'})
         return {'ok': True}
 
-    def approve(self, ident, approved):
+    def approve(self, ident, approved, task_scope=False, approval_id=None):
         if not isinstance(approved, bool): raise ValueError('approved 必须是布尔值。')
+        if not isinstance(task_scope, bool): raise ValueError('task_scope 必须是布尔值。')
         with self.lock:
             pending = self.approvals.get(ident)
             if not pending or pending['event'].is_set(): raise ValueError('没有待确认操作。')
+            if approval_id is not None and approval_id != pending['plan'].get('approval_id'):
+                raise ValueError('待确认操作已变化，请检查当前预览。')
+            if task_scope and (not approved or not pending['plan'].get('task_scope')):
+                raise ValueError('此操作不支持任务验证授权。')
+            pending['task_scope'] = task_scope
+            pending['approved_at'] = time.monotonic()
             pending['approved'] = approved; pending['event'].set()
         return {'ok': True}
 
@@ -437,6 +458,11 @@ class Runtime:
         try:
             validate_arguments(name, args)
             plan = None
+            authorization = getattr(caps, 'task_authorization', None)
+            if authorization is None:
+                caps.task_authorization = authorization = TaskAuthorization()
+            scope_offer = None
+            pending = None
             policy = caps.approval_policy
             requires_approval = (name in MUTATIONS and policy != 'full') or (policy == 'ask' and name in {'web_search', 'browser_read'})
             if name in MUTATIONS or requires_approval:
@@ -447,8 +473,17 @@ class Runtime:
                     self.store.event(ident, 'rejected', {'agent': group, 'tool': name, 'result': out, **context})
                     return out
                 plan = caps.preview(name, args)
+            scoped = requires_approval and authorization.allows(name, plan)
+            if scoped:
+                requires_approval = False
+                self.store.event(ident, 'approved', {'tool': name, 'source': 'task_scope', **context})
             if requires_approval:
-                pending = {'plan': {'tool': name, **plan}, 'approved': False, 'event': threading.Event()}
+                scope_offer = TaskAuthorization.offer(caps, name, plan, args)
+                pending = {'plan': {'tool': name, **plan, 'approval_id': context['call_id']}, 'approved': False, 'event': threading.Event()}
+                if scope_offer:
+                    pending['plan']['task_scope'] = {key: value for key, value in scope_offer.items()
+                                                    if key != 'interpreter_identity'}
+                approval_started = time.monotonic()
                 with self.lock: self.approvals[ident] = pending
                 self.status(ident, 'waiting_approval'); self.store.event(ident, 'approval', {**pending['plan'], **context})
                 deadline = time.monotonic() + 300
@@ -462,9 +497,13 @@ class Runtime:
                     out = {'rejected': True, 'message': '用户拒绝此操作；不要再次尝试。'}
                     self.store.event(ident, 'rejected', {'agent': group, 'text': '用户拒绝了操作。', 'tool': name, 'result': out, **context})
                     return out
-                self.store.event(ident, 'approved', {'tool': name, **context})
+                self.store.event(ident, 'approved', {'tool': name, 'source': 'user',
+                    'task_scope': pending.get('task_scope', False),
+                    'wait_ms': round((time.monotonic() - approval_started) * 1000), **context})
             started = time.monotonic()
             result = caps.execute(name, args, plan)
+            if pending and pending.get('task_scope') and not result.get('error') and not result.get('rejected'):
+                result = {**result, 'task_scope_granted': authorization.grant(caps, scope_offer, pending['approved_at'])}
             self.store.event(ident, 'tool_result', {'agent': group, 'tool': name, 'result': result, 'elapsed_ms': round((time.monotonic() - started) * 1000), **context})
             self._check(ident)
             return result
@@ -509,6 +548,7 @@ class Runtime:
             self.store.event(ident, 'planning', {'agent': 'main', 'text': '理解目标并选择工具'})
             caps = Capabilities(self.store, lambda: self._check(ident), settings['mode'] == 'local', settings.get('approval_policy', 'auto'))
             caps.skill_catalog = self.skills
+            caps.knowledge_engine = self.knowledge_engine
             caps.memory_tools = lambda name, args: self.memory.save(ident, session_id, args['text'], settings, args.get('wait_seconds', 20), caps.check) if name == 'memory_save' else self.memory.search(ident, args['query'], settings, args.get('wait_seconds', 20), caps.check)
             # Explicit tools and offline shortcuts stay deterministic. Online
             # natural-language tasks go through the independent main/worker loop.
@@ -687,13 +727,18 @@ class Runtime:
             remaining = policy.window_tokens - estimate_tokens(messages, selected_tools)
             return {'max_tokens': min(policy.output_reserve_tokens, max(1, remaining))}
         options = output_options()
-        result = client.chat(projected, tools=selected_tools, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta, **options)
-        if policy.enabled and not result.ok and any(marker in str(result.error).lower() for marker in
-                ('context_length_exceeded', 'maximum context length', 'prompt is too long', 'prompt too long')):
-            check_turn()
-            self.context_manager.prepare(ident, client, messages, selected_tools, agent, request_id, deadline, force=True)
-            options = output_options()
-            result = client.chat(messages, tools=selected_tools, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta, **options)
+        model_started = time.monotonic()
+        try:
+            result = client.chat(projected, tools=selected_tools, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta, **options)
+            if policy.enabled and not result.ok and any(marker in str(result.error).lower() for marker in
+                    ('context_length_exceeded', 'maximum context length', 'prompt is too long', 'prompt too long')):
+                check_turn()
+                self.context_manager.prepare(ident, client, messages, selected_tools, agent, request_id, deadline, force=True)
+                options = output_options()
+                result = client.chat(messages, tools=selected_tools, tool_choice=tool_choice, on_delta=delta, on_tool_delta=tool_delta, **options)
+        finally:
+            self.store.event(ident, 'model_end', {'step': step, 'agent': agent, 'request_id': request_id,
+                'elapsed_ms': round((time.monotonic() - model_started) * 1000)})
         check_turn()
         flush(True)
         for index, data in tool_parts.items():
@@ -784,6 +829,7 @@ class Runtime:
             for p in self.approvals.values(): p['event'].set()
         self.scheduler.join(timeout=2)
         self.pool.shutdown(wait=True)
+        self.knowledge_engine.close()
         self.memory.close()
         self.store.close()
         import os

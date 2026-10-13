@@ -11,6 +11,8 @@ import tempfile
 from functools import lru_cache
 from pathlib import Path
 
+GENERATED_DIRS = {'build', 'dist', 'target', 'vendor', 'site-packages', 'coverage', 'htmlcov'}
+
 
 def matches_glob(path, pattern, case_sensitive=False):
     """Segment globs: * never crosses /, ** matches zero or more directories."""
@@ -123,7 +125,8 @@ class FileTools:
         if not base.exists(): raise ValueError('搜索路径不存在。')
         truncated = False
         if base.is_file(): candidates = [base]
-        elif args.get('recursive', True): candidates = self.walk(base)
+        elif args.get('recursive', True):
+            candidates = self.walk(base, exclude_dirs=() if args.get('include_generated') else GENERATED_DIRS)
         else:
             entries, truncated = self.directory_entries(base)
             candidates = (p for p in entries if p.is_file())

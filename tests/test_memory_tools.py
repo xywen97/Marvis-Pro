@@ -78,6 +78,28 @@ class MemoryToolTests(unittest.TestCase):
         self.fail_search=True
         self.assertEqual(m.search(self.ident,'我是谁',self.runtime.settings(),0)['status'],'unavailable')
 
+    def test_persona_templates_are_excluded_and_food_reply_is_relevant(self):
+        from marvis.memory_skill import memory_reply
+        self.memory_records=[
+            {'uri':'viking://user/marvisxy/memories/preferences/food.md','abstract':'比较喜欢吃榴莲和芒果。','level':2},
+            {'uri':'viking://user/marvisxy/memories/soul.md','abstract':'Core Truths: Be helpful','level':2},
+            {'uri':'viking://user/marvisxy/memories/profile.md','abstract':'姓名：温翔宇','level':2},
+            {'uri':'viking://user/marvisxy/memories/identity.md','abstract':'Name: MarvisXY','level':2}]
+        result=self.runtime.memory.search(self.ident,'我喜欢吃什么',self.runtime.settings(),0)
+        self.assertEqual(len(result['records']),2)
+        self.assertEqual(memory_reply(result,'search','我喜欢吃什么'),'比较喜欢吃榴莲和芒果。')
+        seen=[]
+        def summarize(messages,**kwargs):
+            seen.append(messages)
+            self.assertEqual(kwargs['tools'],[]);self.assertEqual(kwargs['tool_choice'],'none')
+            self.assertNotIn('Core Truths',json.dumps(messages));self.assertNotIn('温翔宇',json.dumps(messages,ensure_ascii=False))
+            return ChatResult.success('你喜欢吃榴莲和芒果。')
+        with patch.object(LLMClient,'configured',new_callable=lambda:property(lambda s:True)),patch.object(LLMClient,'chat',side_effect=summarize):
+            task=self.runtime.submit('我喜欢吃什么',self.sid)
+            row=self.wait_task(task)
+        self.assertEqual(row['result'],'你喜欢吃榴莲和芒果。');self.assertEqual(len(seen),1)
+        self.assertEqual([e['content']['tool'] for e in self.runtime.store.events(task['id']) if e['kind']=='tool_start'],['skill_load','memory_search'])
+
     def test_disabled_save_search_make_no_network_requests(self):
         self.runtime.update_settings({'memory_enabled':False})
         before=len(self.calls)

@@ -38,7 +38,7 @@
 | `/workflow-run` | `/wfr` | 立即执行工作流 |
 | `/workflow-toggle` | `/wft` | 暂停/恢复工作流 |
 | `/workflow-delete` | `/wfd` | 删除工作流 |
-| `/approve` | `/a` | 批准待确认操作 |
+| `/approve [TASK_ID] [--task]` | `/a` | 批准待确认操作；`--task` 同时授权当前 Python 文件版本在本任务内运行或 doctest（15 分钟，每次最多 60 秒） |
 | `/reject` | `/j` | 拒绝操作 |
 | `/cancel` | `/c` | 停止任务 |
 | `/trace` | `/tr` | 展开/收起对话执行过程 |

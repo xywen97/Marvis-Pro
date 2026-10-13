@@ -25,7 +25,9 @@ RESULT_SCHEMA = {'type': 'object', 'additionalProperties': False, 'properties': 
     **REPORT_SCHEMA['properties'],
     'evidence': {'type': 'array', 'maxItems': 256, 'items': {'type': 'object', 'additionalProperties': False, 'properties': {
         'tool': {'type': 'string'}, 'call_id': {'type': 'string'}, 'result': {'type': 'object'},
+        'arguments': {'type': 'object'},
     }, 'required': ['tool', 'call_id', 'result']}},
+    'unresolved_failures': {'type': 'array', 'maxItems': 256, 'items': {'type': 'string'}},
 }, 'required': ['version', 'request_id', 'agent', 'status', 'summary', 'requests', 'evidence']}
 
 

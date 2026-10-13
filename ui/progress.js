@@ -50,6 +50,7 @@ window.AgentProgress = (() => {
    return byStep.get(step);
   };
   for(const event of task.events){
+   if(event.kind==='model_end')continue;
    const d=event.content;
    if(event.kind==='model_start')current=d.step;
    const step=get(d.step ?? current);
@@ -78,7 +79,7 @@ window.AgentProgress = (() => {
  function updateTool(node,tool,task) {
   const d=(tool.start||tool.stream).content, result=tool.result;
   node.querySelector('.tool-name').textContent=d.tool||'准备工具调用';
-  const failed=result?.kind==='tool_error'||!!result?.content.result?.error||result?.content.result?.status==='failed';
+  const failed=result?.kind==='tool_error'||!!result?.content.result?.error||result?.content.result?.valid===false||result?.content.result?.status==='failed';
   node.classList.toggle('tool-failed',failed);
   node.classList.toggle('tool-running',!result&&busy(task));
   node.querySelector('.tool-icon').textContent=failed?'!':result?'✓':'↗';

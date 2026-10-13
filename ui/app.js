@@ -3,7 +3,7 @@ const $ = s => document.querySelector(s);
 let token = new URLSearchParams(location.hash.slice(1)).get('token') || sessionStorage.getItem('marvis-token') || '';
 if (token) sessionStorage.setItem('marvis-token', token);
 history.replaceState(null, '', location.pathname);
-let state = null, session = null, page = 'chat', approvalId = null, pathAction = null, refreshing = false;
+let state = null, session = null, page = 'chat', approvalId = null, approvalKey = null, pathAction = null, refreshing = false;
 let liveConnected = false, liveAbort = null, stateUpdates = Promise.resolve(), messageVersion = 0;
 let stateRevision = -1;
 const signatures = {};
@@ -83,8 +83,8 @@ function renderState() {
  if(page==='tasks'&&changed('tasks',state.tasks))renderTasks();
  if(changed('workflows',state.workflows))renderWorkflows();
  const pending=state.tasks.find(t=>t.session_id===session&&t.approval)||state.tasks.find(t=>t.approval);
- if(pending&&approvalId!==pending.id){approvalId=pending.id;$('#approval-plan').textContent=JSON.stringify(pending.approval,null,2);if(!$('#approval-dialog').open)$('#approval-dialog').showModal();}
- if(!pending&&approvalId){approvalId=null;$('#approval-dialog').close();}
+ if(pending&&approvalKey!==`${pending.id}:${pending.approval.approval_id||JSON.stringify(pending.approval)}`)showApproval(pending);
+ if(!pending&&approvalId){approvalId=null;approvalKey=null;$('#approval-dialog').close();}
 }
 const permissionLabels={ask:'请求批准',auto:'帮我批准',full:'完全访问权限'};
 function renderPermissions(){
@@ -187,11 +187,14 @@ function renderTasks() {
   const card=el('div','task-card');card.dataset.taskId=String(t.id);
   const row=el('div','task-topline'),info=el('div','task-info'),title=el('h3','',t.prompt);title.title=t.prompt;
   const meta=el('div','task-meta');meta.append(el('span','',new Date(t.created*1000).toLocaleString()));
+  if(t.timing){const tm=t.timing,sec=value=>(value/1000).toFixed(1)+'秒';
+   meta.append(el('span','',`总耗时 ${sec(tm.total_ms)} · 等待确认 ${sec(tm.approval_ms)} · 模型 ${sec(tm.model_ms)} · 工具 ${sec(tm.tool_ms)}`));
+   if(tm.background_ms)meta.append(el('span','',`后台记忆 ${sec(tm.background_ms)}（不计入执行耗时）`));}
   info.append(title,meta);
   const controls=el('div','task-actions');
   controls.append(el('span','status '+t.status,statuses[t.status]),btn('打开对话',async()=>{session=t.session_id;showPage('chat');await renderMessages();}));
   if(busy(t))controls.append(btn('停止任务',()=>api('cancel',{id:t.id})));
-  if(t.approval)controls.append(btn('查看待确认操作',()=>{approvalId=t.id;$('#approval-plan').textContent=JSON.stringify(t.approval,null,2);$('#approval-dialog').showModal();}));
+  if(t.approval)controls.append(btn('查看待确认操作',()=>showApproval(t)));
   row.append(info,controls);card.append(row);
   if(t.memory_requests?.length){
    const names={saved:'已写入长期记忆',processing:'长期记忆正在保存',no_change:'记忆处理完成，未新增内容',unconfirmed:'记忆写入尚未确认',failed:'记忆保存失败'};
@@ -205,7 +208,7 @@ function renderTasks() {
 }
 function renderWorkflows(){const box=$('#workflow-list');box.replaceChildren();if(!state.workflows.length){box.append(el('div','empty','选择模板，或创建你的第一个自动化工作流。'));return;}for(const w of state.workflows){const row=el('div','workflow-row');row.append(el('h3','',w.name),el('p','hint',w.prompt));row.append(el('p','hint',w.enabled?`每 ${w.interval/60} 分钟 · 下次执行 ${new Date(w.next_run*1000).toLocaleString()}`:'已暂停'));const controls=el('div','task-actions');controls.append(btn('立即运行',async()=>{const t=await api('workflow-action',{id:w.id,action:'run'});session=t.session_id;showPage('chat');await renderMessages();await refresh();}),btn(w.enabled?'暂停':'恢复',async()=>{await api('workflow-action',{id:w.id,action:'toggle'});await refresh();}),btn('删除',async()=>{await api('workflow-action',{id:w.id,action:'delete'});await refresh();}));row.append(controls);box.append(row);} }
 let knowledgeTimer;
-async function loadKnowledge(){const result=await api('knowledge?q='+encodeURIComponent($('#knowledge-query').value));const filter=$('#knowledge-filter').value;const files=result.files.filter(f=>!filter||f.category===filter);const box=$('#knowledge-list');box.replaceChildren();if(!files.length){box.append(el('div','empty','这里还没有匹配的文件。\n添加目录并建立索引，或换一个搜索关键词。'));return;}for(const f of files){const row=el('div','file-row');row.append(el('span','file-icon',f.category==='图片'?'▧':'▤'));const info=el('div','file-info');info.append(el('strong','',f.name),el('small','',f.path),el('small','',`${f.category} · ${(f.size/1024).toFixed(1)} KB · ${new Date(f.modified*1000).toLocaleDateString()}`));row.append(info);if(f.category!=='图片')row.append(btn('读取',()=>submit('读取 '+f.name,{tool:'file_read',arguments:{path:f.path}})));else row.append(btn('OCR',()=>submit('识别图片文字 '+f.name,{tool:'image_ocr',arguments:{path:f.path}})));box.append(row);} }
+async function loadKnowledge(){return KnowledgeUI.load();}
 function renderMemoryStatus(){const toggle=$('#memory-enabled');if(toggle&&!toggle.disabled)toggle.checked=state.settings.memory_enabled===true;const node=$('#memory-status');if(!node)return;const memory=state.memory,service=memory?.service;const names={starting:'记忆服务正在启动',restarting:'记忆服务正在恢复',ready:'记忆服务已就绪',failed:'记忆服务暂不可用',stopped:'记忆服务已停止',disabled:'长期记忆已停用',external:'已配置外部记忆服务'};node.textContent=memory?.enabled===false?'长期记忆已停用':names[service?.state]||'长期记忆未启用';const pending=(memory?.deliveries?.pending||0)+(memory?.deliveries?.extracting||0);if(memory?.active&&pending)node.textContent+=`；正在保存 ${pending} 条记忆`;if(service?.error)node.textContent+='：'+service.error;else if(memory?.last_error)node.textContent+='；'+memory.last_error;}
 function fillSettings(){const f=$('#settings-form');f.elements.memory_enabled.checked=state.settings.memory_enabled===true;f.elements.mode.value=state.settings.mode;f.elements.base_url.value=state.settings.model.base_url||'http://127.0.0.1:11434/v1';f.elements.model.value=state.settings.model.model||'qwen3:latest';f.elements.roots.value=state.settings.roots.join('\n');}
 function pathDialog(action,title,defaultValue,hint){pathAction=action;$('#path-title').textContent=title;$('#path-hint').textContent=hint||'请输入已授权目录内的完整路径。';$('#path-value').value=defaultValue||state?.settings.roots[0]||'';$('#path-query').value='';$('#path-query').classList.toggle('hidden',action!=='files');$('#path-dialog').showModal();$('#path-value').focus();}
@@ -241,12 +244,19 @@ $('#path-form').onsubmit=e=>{e.preventDefault();const path=$('#path-value').valu
 $('#mode-toggle').onclick=()=>safe(async()=>{await api('settings',{mode:state.settings.mode==='local'?'efficiency':'local'});await refresh();toast('运行模式已切换');});
 $('#memory-enabled').onchange=e=>{const toggle=e.target,enabled=toggle.checked;toggle.disabled=true;safe(async()=>{try{await api('settings',{memory_enabled:enabled});await refresh();toast(enabled?'长期记忆已启用':'长期记忆已停用');}finally{toggle.checked=state.settings.memory_enabled===true;toggle.disabled=false;}});};
 $('#settings-form').onsubmit=e=>{e.preventDefault();const f=e.target;safe(async()=>{await api('settings',{mode:f.elements.mode.value,model:{base_url:f.elements.base_url.value,model:f.elements.model.value,...(f.elements.api_key.value?{api_key:f.elements.api_key.value}:{})},roots:f.elements.roots.value.split('\n').map(x=>x.trim()).filter(Boolean)});f.elements.api_key.value='';await refresh();toast('设置已保存');});};
-$('#index-form').onsubmit=e=>{e.preventDefault();safe(()=>submit('建立知识库索引',{tool:'knowledge_index',arguments:{path:$('#index-path').value}}));};
-$('#knowledge-search').onclick=()=>safe(loadKnowledge);$('#knowledge-query').oninput=()=>{clearTimeout(knowledgeTimer);knowledgeTimer=setTimeout(()=>safe(loadKnowledge),250);};$('#knowledge-filter').onchange=()=>safe(loadKnowledge);
+KnowledgeUI.init();
 $('#workflow-form').onsubmit=e=>{e.preventDefault();const f=e.target;safe(async()=>{await api('workflows',{name:f.elements.name.value,prompt:f.elements.prompt.value,interval:Number(f.elements.minutes.value)*60});f.reset();await refresh();toast('工作流已创建');});};
 document.querySelectorAll('[data-template]').forEach(b=>b.onclick=()=>{const f=$('#workflow-form');if(b.dataset.template==='disk'){f.elements.name.value='磁盘空间巡检';f.elements.prompt.value='检查磁盘空间';f.elements.minutes.value=60;}else{f.elements.name.value='更新文档索引';f.elements.prompt.value='/tool knowledge_index '+JSON.stringify({path:state.settings.roots[0]});f.elements.minutes.value=1440;}f.elements.name.focus();});
-async function approve(value){const id=approvalId;if(!id)return;await api('approve',{id,approved:value});$('#approval-dialog').close();await refresh();}
+function showApproval(task){
+ approvalId=task.id;approvalKey=`${task.id}:${task.approval.approval_id||JSON.stringify(task.approval)}`;
+ $('#approval-plan').textContent=JSON.stringify(task.approval,null,2);
+ const scope=task.approval.task_scope;$('#approve-task').hidden=!scope;
+ $('#approval-scope-note').hidden=!scope;$('#approval-scope-note').textContent=scope?.description||'';
+ if(!$('#approval-dialog').open)$('#approval-dialog').showModal();
+}
+async function approve(value,taskScope=false){const id=approvalId;if(!id)return;const approval=state.tasks.find(t=>t.id===id)?.approval;await api('approve',{id,approved:value,task_scope:taskScope,approval_id:approval?.approval_id});$('#approval-dialog').close();await refresh();}
 $('#approve').onclick=()=>safe(()=>approve(true));$('#reject').onclick=()=>safe(()=>approve(false));$('#approval-dialog').oncancel=e=>{e.preventDefault();safe(()=>approve(false));};
+$('#approve-task').onclick=()=>safe(()=>approve(true,true));
 document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='n'){e.preventDefault();$('#new-chat').click();}});
 safe(async()=>{await refresh();session=state?.sessions[0]?.id||null;await renderMessages();if(state)renderState();watchLive();});
 setInterval(()=>{if(!liveConnected)refresh();},250);

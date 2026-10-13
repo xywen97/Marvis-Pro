@@ -45,7 +45,7 @@ HELP = '''输入自然语言，或使用以下命令：
 /workflow-run ID              立即执行工作流
 /workflow-toggle ID           暂停/恢复工作流
 /workflow-delete ID           删除工作流
-/approve [TASK_ID]            批准待确认操作
+/approve [TASK_ID] [--task]   批准操作；--task 同时授权该文件的本任务验证
 /reject [TASK_ID]             拒绝操作
 /cancel [TASK_ID]             停止任务
 /trace                       展开/收起对话执行过程
@@ -229,9 +229,11 @@ class Terminal:
         elif cmd in ('/approve', '/reject', '/cancel'):
             state = self.runtime.snapshot()
             task = next((t for t in state['tasks'] if (t['approval'] if cmd != '/cancel' else t['status'] in ('queued','running','waiting_approval'))), None)
-            ident = rest[0] if rest else task['id'] if task else None
+            ids = [arg for arg in rest if arg != '--task']
+            ident = ids[0] if ids else task['id'] if task else None
             if not ident: raise ValueError('没有可操作的任务。')
             if cmd == '/cancel': self.runtime.cancel(ident)
+            elif '--task' in rest: self.runtime.approve(ident, cmd == '/approve', task_scope=True)
             else: self.runtime.approve(ident, cmd == '/approve')
         else: raise ValueError('未知命令；输入 /help 查看帮助。')
         self.scroll = 0

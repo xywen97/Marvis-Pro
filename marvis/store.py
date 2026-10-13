@@ -197,7 +197,8 @@ class Store:
         with self.lock:
             now = time.time()
             ident = self.execute('INSERT INTO events(task_id,kind,content,created) VALUES (?,?,?,?)', (task_id, kind, json.dumps(content, ensure_ascii=False), now))
-            self.execute('UPDATE tasks SET updated=? WHERE id=?', (now, task_id))
+            # Background memory delivery must not move the task's finish time.
+            self.execute("UPDATE tasks SET updated=? WHERE id=? AND status IN ('queued','running','waiting_approval')", (now, task_id))
             self.record_event_entry(task_id,ident,kind,content,now)
             return ident
 

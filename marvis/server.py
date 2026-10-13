@@ -82,7 +82,10 @@ def serve(runtime, port=0, file_picker=None, notification_host='browser'):
                         from marvis.app_commands import catalog
                         value = catalog()
                     elif parsed.path == '/api/image': value = runtime.image(parse_qs(parsed.query).get('path', [''])[0])
-                    elif parsed.path == '/api/knowledge': value = runtime.knowledge(parse_qs(parsed.query).get('q', [''])[0])
+                    elif parsed.path == '/api/knowledge':
+                        params = parse_qs(parsed.query)
+                        value = runtime.knowledge(params.get('q', [''])[0], params.get('mode', ['keyword'])[0], params.get('category', [''])[0], int(params.get('offset', ['0'])[0]))
+                    elif parsed.path == '/api/knowledge-preview': value = runtime.knowledge_preview(parse_qs(parsed.query).get('path', [''])[0])
                     else: return self.response(404, {'error': '接口不存在。'})
                     return self.response(200, value)
                 except Exception as e: return self.response(400, {'error': str(e)})
@@ -93,6 +96,8 @@ def serve(runtime, port=0, file_picker=None, notification_host='browser'):
             files['/vendor/highlight.css'] = ('vendor/highlight.css', 'text/css; charset=utf-8')
             files['/office.css'] = ('office.css', 'text/css; charset=utf-8')
             files['/team.css'] = ('team.css', 'text/css; charset=utf-8')
+            files['/knowledge.css'] = ('knowledge.css', 'text/css; charset=utf-8')
+            files['/knowledge.js'] = ('knowledge.js', 'text/javascript; charset=utf-8')
             if parsed.path not in files: return self.response(404, {'error': '文件不存在。'})
             name, kind = files[parsed.path]
             self.response(200, (STATIC / name).read_bytes(), kind)
@@ -118,8 +123,9 @@ def serve(runtime, port=0, file_picker=None, notification_host='browser'):
                     value = execute(runtime,data.get('text',''),data.get('session_id')) if runtime.owned else runtime.command(data.get('text',''),data.get('session_id'))
                 elif path == '/api/tasks': value = runtime.submit(data.get('prompt', ''), data.get('session_id'), data.get('action'))
                 elif path == '/api/cancel': value = runtime.cancel(data['id'])
-                elif path == '/api/approve': value = runtime.approve(data['id'], data['approved'])
+                elif path == '/api/approve': value = runtime.approve(data['id'], data['approved'], data.get('task_scope', False), data.get('approval_id'))
                 elif path == '/api/settings': value = runtime.update_settings(data)
+                elif path == '/api/knowledge-sync': value = runtime.knowledge_sync()
                 elif path == '/api/workflows': value = runtime.add_workflow(data['name'], data['prompt'], data['interval'])
                 elif path == '/api/workflow-action': value = runtime.workflow_action(data['id'], data['action'])
                 else: return self.response(404, {'error': '接口不存在。'})

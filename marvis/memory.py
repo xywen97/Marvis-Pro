@@ -188,6 +188,10 @@ class MemoryEngine:
                 if not isinstance(uri, str) or not isinstance(abstract, str) or not abstract.strip(): continue
                 # Directory abstracts describe storage structure, not user facts.
                 if item.get('level', 2) != 2 or uri.rsplit('/', 1)[-1].startswith('.'): continue
+                # OpenViking seeds assistant persona templates beside user
+                # memories. They are not facts about the human user.
+                if uri.rsplit('/', 2)[-2:] in (['memories', 'soul.md'], ['memories', 'identity.md']): continue
+                if any(tag in ('memory_type=soul', 'memory_type=identity') for tag in (item.get('tags') or [])): continue
                 text = abstract[:min(2000, remaining)]
                 if not text: break
                 records.append({'uri': uri[:500], 'text': text}); remaining -= len(text)
