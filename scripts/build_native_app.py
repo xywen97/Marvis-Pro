@@ -109,12 +109,18 @@ def build(output, python, model, install=True):
         with (resources / 'installed-packages.json').open('w') as file:
             subprocess.run([str(executable), '-c', 'import importlib.metadata as m,json; print(json.dumps(sorted([{"name":d.metadata["Name"],"version":d.version} for d in m.distributions()],key=lambda d:d["name"].lower())))'], stdout=file, check=True)
         macos = contents / 'MacOS'; macos.mkdir()
+        # Cocoa derives notification identity from the executable's .app bundle.
+        # Running the interpreter under Resources/python/bin loses that identity.
+        shutil.copy2(executable, macos / 'MarvisXY-python')
         relative_python = '../Resources/python/bin/' + executable.name
         version = executable.name.removeprefix('python')
         common = '#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nunset PYTHONPATH PYTHONHOME\nexport PYTHONNOUSERSITE=1\nexport SSL_CERT_FILE="${SSL_CERT_FILE:-$HERE/../Resources/python/lib/python' + version + '/site-packages/certifi/cacert.pem}"\nexec "$HERE/' + relative_python + '" "$HERE/../Resources/app/main.py" '
         for name, mode in [('MarvisXY', '--app'), ('marvis', '')]:
             launcher = macos / name
-            launcher.write_text(common + mode + ' "$@"\n'); launcher.chmod(0o755)
+            desktop_common = common.replace('unset PYTHONPATH PYTHONHOME',
+                'unset PYTHONPATH\nexport PYTHONHOME="$HERE/../Resources/python"').replace(
+                'exec "$HERE/' + relative_python + '"', 'exec "$HERE/MarvisXY-python"')
+            launcher.write_text((desktop_common if name == 'MarvisXY' else common) + mode + ' "$@"\n'); launcher.chmod(0o755)
         plist = {'CFBundleName': 'MarvisXY', 'CFBundleDisplayName': 'MarvisXY', 'CFBundleIdentifier': 'local.marvisxy.desktop',
                  'CFBundleVersion': '0.2.0', 'CFBundleShortVersionString': '0.2.0', 'CFBundleExecutable': 'MarvisXY',
                  'CFBundlePackageType': 'APPL', 'NSHighResolutionCapable': True,

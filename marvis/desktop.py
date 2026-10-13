@@ -10,10 +10,14 @@ def launch(runtime):
     from marvis.server import serve
     from marvis.file_picker import FilePicker
     picker = FilePicker(runtime)
-    server, url = serve(runtime, file_picker=picker.choose)
+    server, url = serve(runtime, file_picker=picker.choose, notification_host='desktop')
     print('MarvisXY 本机工作台：' + url, flush=True)
+    notifications = None
     try:
         picker.window = webview.create_window('MarvisXY · 个人 AI 工作台', url, width=1380, height=900, min_size=(900, 650), background_color='#f8fafb')
-        webview.start(debug=False)
+        from marvis.notifications import DesktopNotifications
+        notifications = DesktopNotifications(runtime, picker.window)
+        webview.start(notifications.start, debug=False)
     finally:
+        if notifications: notifications.close()
         server.shutdown(); server.server_close()

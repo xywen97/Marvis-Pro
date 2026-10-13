@@ -389,6 +389,7 @@ pyobjc-core==11.1
     #   pyobjc-framework-quartz
     #   pyobjc-framework-security
     #   pyobjc-framework-uniformtypeidentifiers
+    #   pyobjc-framework-usernotifications
     #   pyobjc-framework-webkit
     #   pywebview
 pyobjc-framework-cocoa==11.1
@@ -397,6 +398,7 @@ pyobjc-framework-cocoa==11.1
     #   pyobjc-framework-quartz
     #   pyobjc-framework-security
     #   pyobjc-framework-uniformtypeidentifiers
+    #   pyobjc-framework-usernotifications
     #   pyobjc-framework-webkit
     #   pywebview
 pyobjc-framework-quartz==11.1
@@ -411,6 +413,8 @@ pyobjc-framework-uniformtypeidentifiers==11.1
     # via
     #   -r requirements-desktop.txt
     #   pywebview
+pyobjc-framework-usernotifications==11.1
+    # via -r requirements-desktop.txt
 pyobjc-framework-webkit==11.1
     # via
     #   -r requirements-desktop.txt

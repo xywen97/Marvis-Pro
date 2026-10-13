@@ -13,7 +13,7 @@ from marvis.capabilities import Capabilities
 STATIC = Path(__file__).resolve().parent.parent / 'ui'
 
 
-def serve(runtime, port=0, file_picker=None):
+def serve(runtime, port=0, file_picker=None, notification_host='browser'):
     if file_picker is None:
         from marvis.file_picker import FilePicker
         file_picker = FilePicker(runtime).choose
@@ -44,7 +44,7 @@ def serve(runtime, port=0, file_picker=None):
             previous = None; deadline = time.monotonic() + 25
             try:
                 while time.monotonic() < deadline:
-                    snapshot = runtime.snapshot()
+                    snapshot = {**runtime.snapshot(), 'notification_host': notification_host}
                     payload = json.dumps(snapshot, ensure_ascii=False, separators=(',', ':'))
                     if payload != previous:
                         self.wfile.write(('data: ' + payload + '\n\n').encode('utf-8'))
@@ -58,7 +58,7 @@ def serve(runtime, port=0, file_picker=None):
                 if not self.authorized(): return self.response(403, {'error': '访问令牌无效。'})
                 if parsed.path == '/api/live': return self.live()
                 try:
-                    if parsed.path == '/api/state': value = runtime.snapshot()
+                    if parsed.path == '/api/state': value = {**runtime.snapshot(), 'notification_host': notification_host}
                     elif parsed.path == '/api/messages': value = runtime.messages(parse_qs(parsed.query).get('session', [''])[0])
                     elif parsed.path == '/api/tree': value = runtime.session_tree(parse_qs(parsed.query).get('session', [''])[0])
                     elif parsed.path == '/api/commands':
@@ -71,7 +71,7 @@ def serve(runtime, port=0, file_picker=None):
                 except Exception as e: return self.response(400, {'error': str(e)})
             if self.headers.get('Host') != f'127.0.0.1:{self.server.server_port}': return self.response(403, {'error': '不允许此 Host。'})
             files = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}
-            for name in ('markdown.js', 'progress.js', 'office.js', 'team.js', 'interactions.js', 'vendor/marked.js', 'vendor/purify.js', 'vendor/highlight.js'):
+            for name in ('notifications.js', 'markdown.js', 'progress.js', 'office.js', 'team.js', 'interactions.js', 'vendor/marked.js', 'vendor/purify.js', 'vendor/highlight.js'):
                 files['/' + name] = (name, 'text/javascript; charset=utf-8')
             files['/vendor/highlight.css'] = ('vendor/highlight.css', 'text/css; charset=utf-8')
             files['/office.css'] = ('office.css', 'text/css; charset=utf-8')

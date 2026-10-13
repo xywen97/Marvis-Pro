@@ -36,7 +36,7 @@ function acceptState(value) {
  stateUpdates=stateUpdates.catch(()=>{}).then(async()=>{
   state=withoutDeletedSessions(value);
   if(session&&!allSessions().some(s=>s.id===session)){session=state.sessions[0]?.id||null;$('#prompt').value='';await renderMessages();}
-  $('#connection').textContent='● 已连接';$('#connection').style.color='';renderState();
+  $('#connection').textContent='● 已连接';$('#connection').style.color='';renderState();MarvisNotifications.update(state);
   if(session&&changed('messages-session',[session,allSessions().find(s=>s.id===session)?.active_leaf,allSessions().find(s=>s.id===session)?.active_entry,state.tasks.filter(t=>t.session_id===session).map(t=>[t.id,t.status,t.updated])]))await renderMessages();
  });
  return stateUpdates;
@@ -77,7 +77,7 @@ function renderState() {
  const visible=active.find(t=>t.session_id===session), indicator=$('#active-task');indicator.classList.toggle('hidden',!visible);if(visible){indicator.replaceChildren(el('span','',statuses[visible.status]+' · '+visible.prompt.slice(0,40)),btn('停止',()=>api('cancel',{id:visible.id})));}
  if(page==='tasks'&&changed('tasks',state.tasks))renderTasks();
  if(changed('workflows',state.workflows))renderWorkflows();
- const pending=state.tasks.find(t=>t.approval);
+ const pending=state.tasks.find(t=>t.session_id===session&&t.approval)||state.tasks.find(t=>t.approval);
  if(pending&&approvalId!==pending.id){approvalId=pending.id;$('#approval-plan').textContent=JSON.stringify(pending.approval,null,2);if(!$('#approval-dialog').open)$('#approval-dialog').showModal();}
  if(!pending&&approvalId){approvalId=null;$('#approval-dialog').close();}
 }
@@ -308,3 +308,5 @@ function updateComposer(){
  $('#prompt').disabled=archived;$('#chat-form .send').disabled=archived;
  $('#prompt').placeholder=archived?'已归档的对话：请先恢复后再继续':'告诉我，你想完成什么…';
 }
+
+$("#enable-notifications").onclick=()=>safe(MarvisNotifications.enable);

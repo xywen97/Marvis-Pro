@@ -28,7 +28,8 @@ class ServerTests(unittest.TestCase):
         status,body,headers=self.request('/')
         self.assertEqual(status,200);self.assertIn('工作台',body.decode());self.assertIn("frame-ancestors 'none'",headers['Content-Security-Policy'])
         _,body,_=self.request('/api/state');self.assertEqual(len(json.loads(body)['agents']),9)
-        for path in ('/markdown.js','/vendor/marked.js','/vendor/purify.js','/vendor/highlight.js','/vendor/highlight.css'):
+        self.assertEqual(json.loads(body)['notification_host'], 'browser')
+        for path in ('/notifications.js','/markdown.js','/vendor/marked.js','/vendor/purify.js','/vendor/highlight.js','/vendor/highlight.css'):
             self.assertEqual(self.request(path)[0],200)
     def test_image_requires_authorization_and_valid_raster(self):
         with tempfile.TemporaryDirectory() as root:
